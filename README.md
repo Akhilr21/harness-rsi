@@ -18,6 +18,11 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
+## Development workflow
+
+Use PRs for changes going forward. Keep `main` as the stable branch, do active
+work on `dev` or short-lived feature branches, and merge only after review.
+
 ## Quickstart
 
 Initialize local harness artifacts:
