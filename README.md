@@ -157,6 +157,19 @@ summary, rollup, and stability digest. With promotion enabled, the parent
 advances only after a candidate promotes, so a clean three-cycle run proves an
 `H0 -> H1 -> H2 -> H3` chain under the current local gate contract.
 
+External adapter work starts as read-only metadata, not as full benchmark
+runners:
+
+```bash
+harness-rsi benchmark init --name external-adapter-smoke-v0
+harness-rsi benchmark adapters --benchmark external-adapter-smoke-v0
+```
+
+The adapter report writes `.rsi/benchmarks/<name>/adapter_report.json` and
+checks that Terminal-Bench, SWE-bench, and tau-style task rows preserve source
+IDs, fixture versions, source URLs, local split mapping, evaluator digests, and
+`mode: read_only` without changing gate policy or promotion semantics.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic

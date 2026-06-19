@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -128,6 +129,108 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         } in coverage["waived_missing_cells"]
         assert coverage["coverage_digest"]
         assert (tmp_path / ".rsi" / "harnesses" / "H0.json").exists()
+
+
+def test_external_adapter_smoke_profile_materializes_metadata(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "external-adapter-smoke-v0"]) == 0
+        root = tmp_path / ".rsi" / "benchmarks" / "external-adapter-smoke-v0"
+        manifest = read_json(root / "manifest.json")
+        assert manifest["suite_version"] == "external-adapter-smoke-v0.1"
+        assert manifest["adapter_contract_version"] == "adapter-contract-v0.1"
+        assert manifest["split_counts"] == {"heldout": 3, "regression": 3, "train": 3}
+        assert manifest["families"] == [
+            "issue_patch_planning",
+            "terminal_task_planning",
+            "tool_agent_user",
+        ]
+        heldout = read_jsonl(root / "heldout.jsonl")
+        terminal_task = next(
+            row for row in heldout if row["id"] == "adapter_heldout_terminal_metadata_001"
+        )
+        assert terminal_task["external_adapter"] == {
+            "external_id": "tb-heldout-terminal-metadata",
+            "fixture_version": "terminal-bench-smoke-v0.1",
+            "kind": "terminal",
+            "mode": "read_only",
+            "name": "terminal-bench",
+            "source_url": "https://www.tbench.ai/",
+        }
+        assert terminal_task["split"] == "heldout"
+        assert terminal_task["evaluator_digest"] == evaluator_digest(terminal_task["eval"])
+        coverage = read_json(root / "coverage.json")
+        assert not coverage["missing_required_cells"]
+        assert coverage["coverage_policy"]["fail_on_missing_required"] is True
+
+
+def test_benchmark_adapters_command_writes_read_only_report(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "external-adapter-smoke-v0"]) == 0
+        coverage_before = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "external-adapter-smoke-v0" / "coverage.json"
+        )
+        gate_policy_before = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "external-adapter-smoke-v0" / "gate_policy.json"
+        )
+        assert (
+            main(["benchmark", "adapters", "--benchmark", "external-adapter-smoke-v0"])
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Wrote adapter report to" in output
+        assert "Status: pass" in output
+        assert "Adapter tasks: 9" in output
+        root = tmp_path / ".rsi" / "benchmarks" / "external-adapter-smoke-v0"
+        report = read_json(root / "adapter_report.json")
+        assert report["status"] == "pass"
+        assert report["read_only"] is True
+        assert report["gate_semantics_changed"] is False
+        assert report["task_count"] == 9
+        assert report["external_adapter_task_count"] == 9
+        assert report["kind_counts"] == {
+            "swe_patch": 3,
+            "terminal": 3,
+            "tool_agent_user": 3,
+        }
+        assert report["split_counts"] == {"heldout": 3, "regression": 3, "train": 3}
+        assert report["fixture_versions"] == {
+            "swe-bench": ["swe-bench-smoke-v0.1"],
+            "tau2-bench": ["tau2-bench-smoke-v0.1"],
+            "terminal-bench": ["terminal-bench-smoke-v0.1"],
+        }
+        assert report["metadata_failures"] == []
+        assert report["adapter_report_digest"]
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+        assert read_json(root / "coverage.json") == coverage_before
+        assert read_json(root / "gate_policy.json") == gate_policy_before
+
+
+def test_benchmark_adapters_reads_materialized_copy_only(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "adapter-local"
+        write_adapter_source_profile(source)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "adapter-local",
+                    "--profile",
+                    "adapter-local",
+                ]
+            )
+            == 0
+        )
+        shutil.rmtree(source)
+        assert main(["benchmark", "adapters", "--benchmark", "adapter-local"]) == 0
+        report = read_json(tmp_path / ".rsi" / "benchmarks" / "adapter-local" / "adapter_report.json")
+        assert report["status"] == "pass"
+        assert report["external_adapter_task_count"] == 3
 
 
 def test_benchmark_coverage_command_writes_report(tmp_path: Path, capsys) -> None:
@@ -496,6 +599,93 @@ def test_source_benchmark_profile_rejects_duplicate_task_ids(tmp_path: Path) -> 
             ],
         )
         assert main(["benchmark", "init", "--name", "bad", "--profile", "bad-profile"]) == 1
+
+
+def test_external_adapter_metadata_rejects_malformed_rows(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    cases = [
+        (
+            "non-object-adapter",
+            "external_adapter",
+            "must_be_object",
+            {"external_adapter": "terminal-bench"},
+        ),
+        (
+            "missing-adapter-key",
+            "fixture_version",
+            "missing",
+            {
+                "external_adapter": {
+                    "name": "terminal-bench",
+                    "kind": "terminal",
+                    "external_id": "missing-fixture",
+                    "source_url": "https://www.tbench.ai/",
+                    "mode": "read_only",
+                }
+            },
+        ),
+        (
+            "write-mode-adapter",
+            "mode",
+            "must_be_read_only",
+            {
+                "external_adapter": {
+                    "name": "terminal-bench",
+                    "kind": "terminal",
+                    "external_id": "write-mode",
+                    "fixture_version": "fixture-v0",
+                    "source_url": "https://www.tbench.ai/",
+                    "mode": "runner",
+                }
+            },
+        ),
+        (
+            "unknown-kind-adapter",
+            "kind",
+            "unknown_kind",
+            {
+                "external_adapter": {
+                    "name": "world-model",
+                    "kind": "world_model_trace",
+                    "external_id": "world-model-live",
+                    "fixture_version": "fixture-v0",
+                    "source_url": "https://example.com/world-model",
+                    "mode": "read_only",
+                }
+            },
+        ),
+        (
+            "split-mismatch-adapter",
+            "split",
+            "task_split_mismatch",
+            {
+                "split": "heldout",
+                "external_adapter": {
+                    "name": "terminal-bench",
+                    "kind": "terminal",
+                    "external_id": "split-mismatch",
+                    "fixture_version": "fixture-v0",
+                    "source_url": "https://www.tbench.ai/",
+                    "mode": "read_only",
+                },
+            },
+        ),
+    ]
+    for profile, field, status, overrides in cases:
+        case_root = tmp_path / profile
+        case_root.mkdir()
+        with working_dir(case_root):
+            write_adapter_source_profile(
+                case_root / "benchmarks" / profile,
+                train_overrides=overrides,
+            )
+            assert main(["benchmark", "init", "--name", profile, "--profile", profile]) == 1
+            output = capsys.readouterr()
+            assert "External adapter metadata is invalid" in output.err
+            assert field in output.err
+            assert status in output.err
 
 
 def test_sim_v0_runs_record_suite_metadata(tmp_path: Path) -> None:
@@ -2270,6 +2460,44 @@ def write_minimal_source_profile(path: Path, train_rows: list[dict[str, object]]
         (split_dir / "tasks.jsonl").write_text(
             "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
         )
+
+
+def write_adapter_source_profile(
+    path: Path,
+    *,
+    train_overrides: dict[str, object] | None = None,
+) -> None:
+    write_json(
+        path / "manifest.json",
+        {
+            "id": path.name,
+            "suite_version": f"{path.name}.1",
+            "adapter_contract_version": "adapter-contract-test",
+        },
+    )
+    adapter = {
+        "name": "terminal-bench",
+        "kind": "terminal",
+        "external_id": "terminal-test",
+        "fixture_version": "fixture-test",
+        "source_url": "https://www.tbench.ai/",
+        "mode": "read_only",
+    }
+    for split in ("train", "heldout", "regression"):
+        row: dict[str, object] = {
+            "id": f"{split}-adapter-task",
+            "environment": "terminal_ops",
+            "family": "terminal_task_planning",
+            "instruction": "Return ok.",
+            "eval": {"type": "exact", "expected": "ok"},
+            "source": f"{path.name}/{split}",
+            "external_adapter": dict(adapter),
+        }
+        if split == "train" and train_overrides:
+            row.update(train_overrides)
+        split_dir = path / "sources" / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        (split_dir / "tasks.jsonl").write_text(json.dumps(row, sort_keys=True) + "\n")
 
 
 def write_fake_environment_run(

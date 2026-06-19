@@ -809,3 +809,56 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   read-only Terminal-Bench, SWE-bench, tau/tau3-style, or live world-model
   adapters. If a future adapter changes gate semantics, it should create a new
   CM entry rather than hiding that change inside adapter plumbing.
+
+## CM-0020: Read-Only External Adapter Metadata
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/external-adapter-smoke-v0/`,
+  `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cli.py`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: after CM-0019 stability reports, the first external-adapter
+  increment should prove metadata parity, not benchmark ambition.
+  Terminal-Bench, SWE-bench, and tau/tau3-style sources can be represented
+  safely if they compile into the existing local split, evaluator, coverage, and
+  gate schema without adding new promotion semantics.
+- Change made: added task-level `external_adapter` metadata validation for
+  source profiles, a read-only `benchmark adapters --benchmark <name>` report,
+  and a committed `external-adapter-smoke-v0` profile with terminal,
+  issue-patch, and tool-agent-user task shapes across train, heldout, and
+  regression. Adapter rows must identify `name`, `kind`, `external_id`,
+  `fixture_version`, `source_url`, and `mode: read_only`. The report records
+  adapter task counts, kind counts, split counts, fixture versions, source URLs,
+  metadata failures, and an `adapter_report_digest`.
+- Gate enforcement: no promotion semantics changed. Adapter reports do not run
+  external benchmark harnesses, do not create runs or gates, do not mutate
+  coverage or gate policy artifacts, and are not promotion evidence. They are
+  provenance and fixture-readiness evidence only.
+- Frontier/world-model note: external coding, terminal, and customer-support
+  tasks are useful only if they enter the harness through the same local
+  measurement contract. Live Decart/Oasis-style world-model adapters remain
+  deferred because CM-0020 does not yet define simulator trace ingestion,
+  intervention replay, or live rollout validation semantics.
+- Validation run: `pytest` reported 93 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused `pytest tests/test_harness.py` reported 76
+  passing tests and `pytest tests/test_eval_suite_coverage.py` reported 17
+  passing tests. A CLI smoke materialized `external-adapter-smoke-v0` and
+  `harness-rsi benchmark adapters --benchmark external-adapter-smoke-v0`
+  produced a passing read-only report with 9 adapter rows, zero metadata
+  failures, and no gate semantics changed. A one-cycle stability smoke on
+  `external-adapter-smoke-v0` passed from H0 to H1 with zero coverage,
+  environment, efficiency, split-isolation, waiver, heldout, or regression
+  failures.
+- Observation: the repo already had source profile materialization and stability
+  reports, but “add external adapters” could still be misread as building
+  runners first. The missing step was an inspectable metadata contract that lets
+  adapter-shaped tasks become local benchmark rows without changing the
+  promotion boundary.
+- Learning: adapters should begin as provenance and fixture surfaces. The
+  harness-level RSI claim remains local: same model, same split contract, same
+  evaluator identity, same coverage/waiver/efficiency gates, and same composite
+  promotion checks.
+- Remediation: next add importers from frozen local exports of real
+  Terminal-Bench, SWE-bench, and tau/tau3-style datasets into this metadata
+  contract. Any adapter that needs new scoring, tool execution, Docker, or live
+  simulator semantics must get its own CM entry and gate-policy review.

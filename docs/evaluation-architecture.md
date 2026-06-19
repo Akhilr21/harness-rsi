@@ -82,6 +82,33 @@ metadata into the local task/run/gate schema.
 External adapters should not set new gate semantics. They should preserve the
 same local split, trace, compare, and promotion contract used by `sim-v0`.
 
+CM-0020 starts with metadata/schema parity only. A task row that comes from an
+external benchmark can include:
+
+```json
+"external_adapter": {
+  "name": "terminal-bench",
+  "kind": "terminal",
+  "external_id": "benchmark-task-id",
+  "fixture_version": "snapshot-or-release-id",
+  "source_url": "https://...",
+  "mode": "read_only"
+}
+```
+
+Allowed CM-0020 adapter kinds are `terminal`, `swe_patch`, and
+`tool_agent_user`. These map to Terminal-Bench-style terminal tasks,
+SWE-bench-style issue patching, and tau/tau3-style tool-agent-user workflows.
+Live simulator/world-model adapters remain deferred; static world-model traces
+stay in `sim-v0` until their own adapter contract is explicit.
+
+`benchmark adapters --benchmark <name>` writes
+`.rsi/benchmarks/<name>/adapter_report.json`. The report is provenance and
+fixture evidence only. It records source benchmark counts, split counts, fixture
+versions, source URLs, metadata failures, and a report digest. It does not run
+Docker, terminals, customer-service simulators, or external benchmark harnesses,
+and its digest is not promotion evidence.
+
 ## Splits
 
 Each benchmark environment has three splits:

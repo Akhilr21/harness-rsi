@@ -9,6 +9,7 @@ from harness_rsi.benchmarks import (
     gate_candidate,
     init_benchmark,
     run_benchmark,
+    write_adapter_report,
     write_coverage_report,
     write_waiver_report,
 )
@@ -141,6 +142,14 @@ def benchmark_waivers(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_adapters(args: argparse.Namespace) -> int:
+    path = write_adapter_report(args.benchmark)
+    report = read_json(path)
+    print(f"Wrote adapter report to {path}")
+    print(readable_adapter_summary(report))
+    return 0
+
+
 def harness_create_candidate(args: argparse.Namespace) -> int:
     path = create_candidate_version(
         parent=args.parent,
@@ -243,6 +252,21 @@ def readable_waiver_summary(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def readable_adapter_summary(report: dict[str, object]) -> str:
+    lines = [
+        f"Benchmark: {report.get('benchmark')}",
+        f"Suite version: {report.get('suite_version')}",
+        f"Status: {report.get('status')}",
+        f"Read only: {report.get('read_only')}",
+        f"Adapter tasks: {report.get('external_adapter_task_count')}",
+        f"Adapters: {readable_adapter_counts(report.get('adapters', {}))}",
+        f"Failures: {list_count(report.get('failures'))}",
+        f"Gate semantics changed: {report.get('gate_semantics_changed')}",
+        f"Adapter report digest: {report.get('adapter_report_digest')}",
+    ]
+    return "\n".join(lines)
+
+
 def readable_status_counts(value: object) -> str:
     if not isinstance(value, dict):
         return "unavailable"
@@ -256,6 +280,12 @@ def readable_group_counts(value: object) -> str:
     if not isinstance(value, dict) or not value:
         return "none"
     return ", ".join(f"{name}={value[name]['count']}" for name in sorted(value))
+
+
+def readable_adapter_counts(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    return ", ".join(f"{name}={value[name]['task_count']}" for name in sorted(value))
 
 
 def readable_split_counts(value: object) -> str:
@@ -354,6 +384,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mark reviews due soon when review_by is within this many days.",
     )
     benchmark_waivers_parser.set_defaults(func=benchmark_waivers)
+
+    benchmark_adapters_parser = benchmark_sub.add_parser(
+        "adapters",
+        help="Write read-only external adapter metadata report for a benchmark.",
+    )
+    benchmark_adapters_parser.add_argument("--benchmark", default="synthetic")
+    benchmark_adapters_parser.set_defaults(func=benchmark_adapters)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")
     harness_sub = harness.add_subparsers(dest="harness_command", required=True)

@@ -252,9 +252,10 @@ harness component.
   regression cycle and assert that every artifact path is written.
 - **Level 3: Policy tests** intentionally fail model matching, task ordering,
   per-environment thresholds, failure-family coverage, and regression tolerances.
-- **Level 4: External adapter parity** checks that Terminal-Bench, SWE-bench, and
-  tau/tau3-style adapters preserve the same local task, run, compare, and gate
-  semantics.
+- **Level 4: External adapter metadata parity** checks that Terminal-Bench,
+  SWE-bench, and tau/tau3-style task sources preserve source IDs, fixture
+  versions, source URLs, split mapping, evaluator identity, and read-only mode
+  before any external runner is wired in.
 
 External adapters should wait until Levels 0 through 3 are boring and stable.
 
@@ -302,11 +303,14 @@ CM-0018 added deterministic overdue-waiver review gates for active missing
 coverage debt.
 CM-0019 added repeated local-cycle stability reports that run the full current
 gate contract across promoted or dry-run candidate chains.
+CM-0020 added read-only external adapter metadata reports and an
+`external-adapter-smoke-v0` profile for Terminal-Bench, SWE-bench, and
+tau-style task shapes.
 
 The next increment should target:
 
-1. Add read-only external adapters for Terminal-Bench, SWE-bench, and
-   tau/tau3-style tasks.
+1. Add read-only importers from frozen local exports of Terminal-Bench,
+   SWE-bench, and tau/tau3-style datasets into the CM-0020 metadata contract.
 2. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
 3. Add sanitized real traces only when their source, fixture version, and split

@@ -14,6 +14,15 @@ from harness_rsi.paths import BENCHMARKS, GATES, HARNESSES
 SOURCE_BENCHMARKS = Path("benchmarks")
 PACKAGE_BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 REQUIRED_SPLITS = ("train", "heldout", "regression")
+ADAPTER_KINDS = {"terminal", "swe_patch", "tool_agent_user"}
+ADAPTER_REQUIRED_KEYS = {
+    "name",
+    "kind",
+    "external_id",
+    "fixture_version",
+    "source_url",
+    "mode",
+}
 
 
 @dataclass(frozen=True)
@@ -164,6 +173,8 @@ def init_source_benchmark(*, name: str, profile: str) -> Path:
             profile=profile,
             suite_version=suite_version,
         )
+    validate_external_adapter_metadata(split_rows)
+    for split in REQUIRED_SPLITS:
         write_jsonl(root / f"{split}.jsonl", split_rows[split])
 
     h0 = harness_path("H0")
@@ -238,6 +249,95 @@ def read_source_split(
     if not rows:
         raise RuntimeError(f"Benchmark source split has no tasks: {split_dir}")
     return rows
+
+
+def validate_external_adapter_metadata(split_rows: dict[str, list[dict[str, Any]]]) -> None:
+    failures = find_external_adapter_metadata_failures(split_rows)
+    if failures:
+        formatted = "; ".join(
+            f"{failure['task_id']}:{failure['field']}:{failure['status']}"
+            for failure in failures
+        )
+        raise RuntimeError(f"External adapter metadata is invalid: {formatted}.")
+
+
+def find_external_adapter_metadata_failures(
+    split_rows: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    for split, rows in split_rows.items():
+        for row in rows:
+            task_id = str(row.get("id", "<missing-id>"))
+            adapter = row.get("external_adapter")
+            if adapter is None:
+                continue
+            if not isinstance(adapter, dict):
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "external_adapter",
+                        "status": "must_be_object",
+                    }
+                )
+                continue
+            unknown = sorted(set(adapter) - ADAPTER_REQUIRED_KEYS)
+            if unknown:
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "external_adapter",
+                        "status": f"unknown_keys:{','.join(unknown)}",
+                    }
+                )
+            for key in sorted(ADAPTER_REQUIRED_KEYS):
+                if not str(adapter.get(key, "")).strip():
+                    failures.append(
+                        {
+                            "task_id": task_id,
+                            "split": split,
+                            "field": key,
+                            "status": "missing",
+                        }
+                    )
+            if adapter.get("mode") and adapter.get("mode") != "read_only":
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "mode",
+                        "status": "must_be_read_only",
+                    }
+                )
+            if adapter.get("kind") and adapter.get("kind") not in ADAPTER_KINDS:
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "kind",
+                        "status": f"unknown_kind:{adapter.get('kind')}",
+                    }
+                )
+            if row.get("split") != split:
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "split",
+                        "status": "task_split_mismatch",
+                    }
+                )
+            if not row.get("source"):
+                failures.append(
+                    {
+                        "task_id": task_id,
+                        "split": split,
+                        "field": "source",
+                        "status": "missing",
+                    }
+                )
+    return failures
 
 
 def evaluator_digest(evaluator: dict[str, Any]) -> str:
@@ -775,6 +875,134 @@ def write_waiver_report(
     path = benchmark_dir(benchmark) / "waiver_lifecycle.json"
     write_json(path, report)
     return path
+
+
+def write_adapter_report(benchmark: str) -> Path:
+    report = build_adapter_report(benchmark)
+    path = benchmark_dir(benchmark) / "adapter_report.json"
+    write_json(path, report)
+    return path
+
+
+def build_adapter_report(benchmark: str) -> dict[str, Any]:
+    root = benchmark_dir(benchmark)
+    if not root.exists():
+        raise RuntimeError(f"Benchmark not found: {root}")
+    manifest = read_json(root / "manifest.json") if (root / "manifest.json").exists() else {}
+    split_rows = {split: read_jsonl_with_path(root / f"{split}.jsonl") for split in REQUIRED_SPLITS}
+    failures = find_external_adapter_metadata_failures(split_rows)
+    tasks = [
+        adapter_task_summary(row, split)
+        for split, rows in split_rows.items()
+        for row in rows
+        if row.get("external_adapter")
+    ]
+    adapters = group_adapter_tasks(tasks)
+    report = {
+        "benchmark": benchmark,
+        "suite_version": manifest.get("suite_version"),
+        "suite_digest": manifest.get("suite_digest"),
+        "coverage_digest": read_coverage_digest(benchmark),
+        "task_count": sum(len(rows) for rows in split_rows.values()),
+        "external_adapter_task_count": len(tasks),
+        "adapter_task_count": len(tasks),
+        "kind_counts": count_adapter_field(tasks, "kind"),
+        "split_counts": count_task_field(tasks, "split"),
+        "fixture_versions": {
+            name: adapters[name]["fixture_versions"] for name in sorted(adapters)
+        },
+        "status": "pass" if tasks and not failures else ("empty" if not tasks else "fail"),
+        "read_only": bool(tasks) and not failures,
+        "gate_semantics_changed": False,
+        "adapters": adapters,
+        "tasks": tasks,
+        "metadata_failures": failures,
+        "failures": failures,
+    }
+    report["adapter_report_digest"] = digest_payload(report)
+    return report
+
+
+def adapter_task_summary(row: dict[str, Any], split: str) -> dict[str, Any]:
+    adapter = row["external_adapter"]
+    return {
+        "id": row["id"],
+        "split": split,
+        "environment": row.get("environment", "default"),
+        "family": row.get("family", "unlabeled"),
+        "source": row.get("source"),
+        "evaluator_digest": row.get("evaluator_digest"),
+        "adapter": {
+            "name": adapter.get("name"),
+            "kind": adapter.get("kind"),
+            "external_id": adapter.get("external_id"),
+            "fixture_version": adapter.get("fixture_version"),
+            "source_url": adapter.get("source_url"),
+            "mode": adapter.get("mode"),
+        },
+    }
+
+
+def group_adapter_tasks(tasks: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        adapter = task["adapter"]
+        name = str(adapter["name"])
+        group = groups.setdefault(
+            name,
+            {
+                "task_count": 0,
+                "kind": adapter.get("kind"),
+                "mode": adapter.get("mode"),
+                "split_counts": {split: 0 for split in REQUIRED_SPLITS},
+                "environments": set(),
+                "families": set(),
+                "fixture_versions": set(),
+                "source_urls": set(),
+                "external_ids": [],
+            },
+        )
+        group["task_count"] += 1
+        group["split_counts"][task["split"]] += 1
+        group["environments"].add(task["environment"])
+        group["families"].add(task["family"])
+        group["fixture_versions"].add(adapter.get("fixture_version"))
+        group["source_urls"].add(adapter.get("source_url"))
+        group["external_ids"].append(adapter.get("external_id"))
+    normalized = {}
+    for name in sorted(groups):
+        group = groups[name]
+        normalized[name] = {
+            **group,
+            "environments": sorted(group["environments"]),
+            "families": sorted(group["families"]),
+            "fixture_versions": sorted(
+                str(item) for item in group["fixture_versions"] if item is not None
+            ),
+            "source_urls": sorted(
+                str(item) for item in group["source_urls"] if item is not None
+            ),
+            "external_ids": sorted(
+                str(item) for item in group["external_ids"] if item is not None
+            ),
+        }
+    return normalized
+
+
+def count_adapter_field(tasks: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        key = str(task["adapter"].get(field))
+        counts[key] = counts.get(key, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def count_task_field(tasks: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        key = str(task.get(field))
+        counts[key] = counts.get(key, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
 
 
 def build_waiver_report(

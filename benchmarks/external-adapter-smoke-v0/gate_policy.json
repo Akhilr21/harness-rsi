@@ -1,0 +1,18 @@
+{
+  "heldout": {
+    "min_pass_rate_delta": 0.0,
+    "max_allowed_drop": 0.0,
+    "max_environment_drop": 0.0,
+    "protected_environments": "all",
+    "max_attempt_delta": 0,
+    "max_tool_call_delta": 0
+  },
+  "regression": {
+    "min_pass_rate_delta": 0.0,
+    "max_allowed_drop": 0.0,
+    "max_environment_drop": 0.0,
+    "protected_environments": "all",
+    "max_attempt_delta": 0,
+    "max_tool_call_delta": 0
+  }
+}
