@@ -133,6 +133,28 @@ Promotion rejects:
 This keeps harness-level RSI legible: each new harness version is a reviewable
 artifact with its own evidence trail.
 
+## Automated Cycle
+
+The automated cycle is the first end-to-end approximation of harness-level RSI:
+
+```text
+run parent on train
+  -> propose patch from train trace
+  -> create Hn+1 candidate
+  -> run Hn and Hn+1 on heldout
+  -> run Hn and Hn+1 on regression
+  -> write heldout gate
+  -> write regression gate
+  -> write composite gate
+  -> promote or reject Hn+1
+```
+
+The train run is only evidence for proposal generation. It is not a promotion
+gate. Promotion consumes a composite decision that requires both heldout and
+regression to pass.
+
+Cycle summaries live under `.rsi/cycles/` so every artifact path is reviewable.
+
 ## Frontier Model Interaction
 
 Frontier models make the harness question sharper because the model may already

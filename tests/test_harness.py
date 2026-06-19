@@ -7,6 +7,7 @@ from pathlib import Path
 
 from harness_rsi.benchmarks import compare_runs, gate_candidate
 from harness_rsi.cli import main
+from harness_rsi.cycle import run_experiment_cycle
 from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, write_json
 from harness_rsi.versions import (
@@ -378,6 +379,60 @@ def test_harness_list_flags_filename_id_mismatch(tmp_path: Path) -> None:
         h1_listing = next(item for item in versions if item["name"] == "H1")
         assert h1_listing["declared_id"] == "H0"
         assert h1_listing["id_matches_filename"] is False
+
+
+def test_experiment_cycle_promotes_candidate_with_composite_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        cycle_path = run_experiment_cycle(
+            parent="H0",
+            candidate="H1",
+            benchmark="synthetic",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=True,
+        )
+        cycle = read_json(cycle_path)
+        assert cycle["status"] == "promoted"
+        assert {step["name"] for step in cycle["steps"]} >= {
+            "train_parent",
+            "propose_patch",
+            "create_candidate",
+            "heldout_gate",
+            "regression_gate",
+            "composite_gate",
+        }
+        config = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
+        assert config["status"] == "promoted"
+        assert config["lineage"]["heldout_gate"]
+        assert config["lineage"]["regression_gate"]
+        assert config["lineage"]["heldout_candidate_run"]
+        assert config["lineage"]["regression_candidate_run"]
+        assert config["lineage"]["split"] == "heldout+regression"
+
+
+def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        cycle_path = run_experiment_cycle(
+            parent="H0",
+            candidate="H1",
+            benchmark="synthetic",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=False,
+        )
+        cycle = read_json(cycle_path)
+        assert cycle["status"] == "rejected"
+        assert cycle["rejection_reason"] == "promotion disabled"
+        config = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
+        assert config["status"] == "candidate"
 
 
 def write_fake_run(

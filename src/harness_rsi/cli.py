@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from harness_rsi.benchmarks import compare_runs, gate_candidate, init_benchmark, run_benchmark
+from harness_rsi.cycle import run_experiment_cycle
 from harness_rsi.decisions import promote, reject
 from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.improve import latest_run, propose_patch
@@ -55,6 +56,7 @@ def improve(args: argparse.Namespace) -> int:
         model=config_model,
         reasoning_effort=args.reasoning_effort,
         mock=args.mock,
+        config_path=HARNESS,
     )
     print(f"Wrote proposal to {path}")
     return 0
@@ -130,6 +132,23 @@ def harness_promote(args: argparse.Namespace) -> int:
 
 def harness_list(args: argparse.Namespace) -> int:
     print(readable_json(list_harness_versions()))
+    return 0
+
+
+def experiment_cycle(args: argparse.Namespace) -> int:
+    path = run_experiment_cycle(
+        parent=args.parent,
+        candidate=args.candidate,
+        benchmark=args.benchmark,
+        model=args.model,
+        reasoning_effort=args.reasoning_effort,
+        mock=args.mock,
+        min_heldout_delta=args.min_heldout_delta,
+        max_regression_drop=args.max_regression_drop,
+        promote=not args.no_promote,
+    )
+    print(f"Wrote cycle summary to {path}")
+    print(readable_json(read_json(path)))
     return 0
 
 
@@ -230,6 +249,24 @@ def build_parser() -> argparse.ArgumentParser:
     harness_version_parser.add_argument("--proposal", required=True)
     harness_version_parser.add_argument("--overwrite", action="store_true")
     harness_version_parser.set_defaults(func=harness_create_candidate)
+
+    experiment = sub.add_parser("experiment", help="Run higher-level harness experiments.")
+    experiment_sub = experiment.add_subparsers(dest="experiment_command", required=True)
+
+    cycle_parser = experiment_sub.add_parser(
+        "cycle",
+        help="Run train -> propose -> candidate -> heldout/regression gates -> promote.",
+    )
+    cycle_parser.add_argument("--parent", required=True)
+    cycle_parser.add_argument("--candidate", required=True)
+    cycle_parser.add_argument("--benchmark", default="synthetic")
+    cycle_parser.add_argument("--model")
+    cycle_parser.add_argument("--reasoning-effort", default=DEFAULT_HARNESS["reasoning_effort"])
+    cycle_parser.add_argument("--mock", action="store_true")
+    cycle_parser.add_argument("--min-heldout-delta", type=float, default=0.0)
+    cycle_parser.add_argument("--max-regression-drop", type=float, default=0.0)
+    cycle_parser.add_argument("--no-promote", action="store_true")
+    cycle_parser.set_defaults(func=experiment_cycle)
 
     return parser
 

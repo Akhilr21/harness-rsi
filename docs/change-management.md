@@ -129,3 +129,34 @@ Each meaningful change should record:
 - Remediation: next increment should generate proposals from train runs and wire
   a full automated cycle: run train, propose candidate, run heldout/regression,
   gate, then promote or reject.
+
+## CM-0006: Automated Experiment Cycle
+
+- Date: 2026-06-18
+- Files changed: `src/harness_rsi/cycle.py`, `src/harness_rsi/cli.py`,
+  `src/harness_rsi/improve.py`, `src/harness_rsi/benchmarks.py`,
+  `src/harness_rsi/versions.py`, `src/harness_rsi/harness.py`,
+  `src/harness_rsi/paths.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/change-management.md`
+- Hypothesis: once candidate creation, heldout gates, regression gates, and
+  promotion are explicit, the next useful primitive is a single transparent
+  cycle that runs them in order and writes an audit summary.
+- Change made: added `harness-rsi experiment cycle`. The command runs parent
+  train evidence, proposes a patch, creates a candidate, evaluates heldout and
+  regression splits for parent/candidate, writes both gates, writes a composite
+  gate, and promotes only when both gates pass. Cycle summaries are written to
+  `.rsi/cycles/`.
+- Validation run: `pytest` reported 21 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke test ran a full mock cycle creating and
+  promoting `H5` from `H0`, then inspected promoted lineage for heldout and
+  regression run paths.
+- Observation: the sidecar review caught that proposal generation was still
+  reading legacy `.rsi/harness.json`, not the parent harness under test. The
+  cycle now passes the parent harness path into proposal generation.
+- Learning: promotion should consume a composite decision, not a single heldout
+  gate. Otherwise regression evidence is checked in orchestration but not
+  preserved as promotion lineage. Composite gates should also carry explicit
+  heldout/regression run IDs, not just gate file paths.
+- Remediation: next increment should add richer cycle policies, especially
+  per-environment deltas, explicit cost/latency placeholders, and rejection
+  artifacts for non-promoted candidates.

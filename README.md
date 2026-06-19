@@ -101,6 +101,23 @@ benchmark split, and run evidence. Promotion refuses rejected gates,
 parent/candidate mismatches, missing or mismatched behavior digests, existing
 promotions, and model changes.
 
+## Experiment cycle
+
+The full local loop can be run as one command:
+
+```bash
+harness-rsi experiment cycle \
+  --parent H0 \
+  --candidate H1 \
+  --benchmark synthetic \
+  --mock
+```
+
+The cycle runs parent training evidence, proposes a patch, creates the candidate,
+runs parent/candidate heldout and regression splits, writes separate gates,
+writes a composite gate, and promotes the candidate only when both heldout and
+regression gates pass.
+
 ## Real model runs
 
 Set an API key and omit `--mock`:
@@ -129,6 +146,7 @@ overrideable so experiments can pin a model explicitly.
   proposals/            # candidate harness patches
   decisions/            # promotion/rejection records
   gates/                # benchmark promotion gate decisions
+  cycles/               # end-to-end cycle summaries
 ```
 
 ## What each piece means

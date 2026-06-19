@@ -90,6 +90,14 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
             "benchmark": gate.get("benchmark"),
             "split": gate.get("split"),
             "pass_rate_delta": gate.get("pass_rate_delta"),
+            "heldout_gate": gate.get("heldout_gate"),
+            "regression_gate": gate.get("regression_gate"),
+            "heldout_baseline_run": gate.get("heldout_baseline_run"),
+            "heldout_candidate_run": gate.get("heldout_candidate_run"),
+            "regression_baseline_run": gate.get("regression_baseline_run"),
+            "regression_candidate_run": gate.get("regression_candidate_run"),
+            "heldout_pass_rate_delta": gate.get("heldout_pass_rate_delta"),
+            "regression_pass_rate_delta": gate.get("regression_pass_rate_delta"),
         }
     )
     config.update(

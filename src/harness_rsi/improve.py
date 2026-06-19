@@ -20,15 +20,17 @@ def latest_run(runs_dir: Path) -> Path:
 def propose_patch(
     *,
     run_dir: Path,
-    model: str,
+    model: str | None,
     reasoning_effort: str,
     mock: bool,
+    config_path: Path = HARNESS,
 ) -> Path:
-    config = read_json(HARNESS)
+    config = read_json(config_path)
+    proposal_model = model or config["model"]
     results = read_json(run_dir / "results.json")
     trace = (run_dir / "trace.jsonl").read_text()
     learnings = LEARNINGS.read_text() if LEARNINGS.exists() else ""
-    proposal_id = datetime.now(timezone.utc).strftime("proposal-%Y%m%dT%H%M%SZ")
+    proposal_id = datetime.now(timezone.utc).strftime("proposal-%Y%m%dT%H%M%S%fZ")
 
     if mock:
         proposal: dict[str, Any] = {
@@ -62,7 +64,7 @@ Propose exactly one small harness improvement. Return JSON with:
 id, summary, learning, config_patch, risks, expected_metric.
 Do not propose changing the model.
 """
-        text = call_model(model=model, prompt=prompt, reasoning_effort=reasoning_effort)
+        text = call_model(model=proposal_model, prompt=prompt, reasoning_effort=reasoning_effort)
         try:
             proposal = json.loads(text)
             if not isinstance(proposal, dict):

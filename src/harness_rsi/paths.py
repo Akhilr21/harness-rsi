@@ -14,8 +14,19 @@ RUNS = ROOT / "runs"
 PROPOSALS = ROOT / "proposals"
 DECISIONS = ROOT / "decisions"
 GATES = ROOT / "gates"
+CYCLES = ROOT / "cycles"
 
 
 def ensure_dirs() -> None:
-    for path in (HARNESSES, BENCHMARKS, TASKS, MEMORY, RUNS, PROPOSALS, DECISIONS, GATES):
+    for path in (
+        HARNESSES,
+        BENCHMARKS,
+        TASKS,
+        MEMORY,
+        RUNS,
+        PROPOSALS,
+        DECISIONS,
+        GATES,
+        CYCLES,
+    ):
         path.mkdir(parents=True, exist_ok=True)
