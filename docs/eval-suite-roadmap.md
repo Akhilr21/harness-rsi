@@ -104,11 +104,14 @@ Implemented report shape:
 - summary: required cells, waived cells, missing required cells, unclassified
   missing cells, total task count, suite digest, coverage digest, and evaluator
   digest coverage
+- waiver lifecycle: waived cells indexed by owner, review date, tracking
+  reference, expiry condition, and environment/family/split identity
 
 CLI:
 
 ```bash
 harness-rsi benchmark coverage --benchmark sim-v0
+harness-rsi benchmark waivers --benchmark sim-v0
 ```
 
 The command reads the materialized `.rsi/benchmarks/sim-v0` copy, writes
@@ -124,6 +127,12 @@ Waivers are now typed measurement debt. Each waiver must include a non-empty
 with optional `expires_when` text for the condition that should retire the
 waiver. Duplicate waiver identities, unknown waiver keys, and required/waiver
 overlap are rejected as malformed suite policy.
+The waiver lifecycle command writes `waiver_lifecycle.json` as an alternate
+index over the same metadata, grouped by owner and review date. It also compares
+fresh coverage identity to the stored `coverage.json` digest so stale coverage
+artifacts are visible. It is audit/query evidence; waived cells remain
+non-blocking unless a later gate-policy change explicitly adds expired-waiver or
+overdue-waiver promotion semantics.
 
 CM-0013 adds required `world_model_static` coverage for
 `rollout_summarization`, heldout and regression `reset_replay`, and regression
@@ -182,6 +191,9 @@ condition metadata. Unclassified missing cells remain visible as backlog
 pressure for future suite versions. If coverage policy changes after benchmark
 runs are produced, the gate rejects with `coverage_digest_mismatch` instead of
 mixing stale run evidence with fresh waiver metadata.
+Waiver lifecycle reports do not add promotion semantics by themselves; they make
+measurement debt easier to query before a later gate policy decides whether any
+overdue waiver should block promotion.
 
 ## Frontier And World-Model Pressure
 
@@ -257,13 +269,16 @@ waived coverage cells and gate enforcement for missing required coverage.
 CM-0012 added strict waiver metadata and coverage-digest drift rejection.
 CM-0013 added static Decart/Oasis-style rollout trace cases and promoted key
 world-model trace families into required coverage.
+CM-0014 added a waiver lifecycle report grouped by owner and review date without
+changing promotion semantics.
 
 The next increment should target:
 
-1. Add a waiver lifecycle report or command grouped by owner and review date.
-2. Add digest mismatch tests at the composite-gate and promotion boundary.
-3. Decide when efficiency thresholds are reliable enough to gate attempts,
+1. Add digest mismatch tests at the composite-gate and promotion boundary.
+2. Decide when efficiency thresholds are reliable enough to gate attempts,
    duration, tool calls, and cost.
+3. Decide whether overdue waiver lifecycle states should become a future gate
+   policy or stay audit-only.
 4. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
 5. Keep live simulator or world-model adapters behind stable local trace

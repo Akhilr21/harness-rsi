@@ -164,6 +164,7 @@ materialization writes `coverage.json`, and the report can be regenerated with:
 
 ```bash
 harness-rsi benchmark coverage --benchmark sim-v0
+harness-rsi benchmark waivers --benchmark sim-v0
 ```
 
 Compiled task rows carry evaluator digests, run metadata carries suite and
@@ -175,6 +176,10 @@ Waived cells carry owner, tracking reference, review date, and expiry-condition
 metadata so intentionally missing evidence stays reviewable.
 The coverage command prints a concise summary and writes the full
 environment/family/split matrix to `.rsi/benchmarks/<name>/coverage.json`.
+The waiver lifecycle command writes
+`.rsi/benchmarks/<name>/waiver_lifecycle.json`, groups active waived cells by
+owner and review date, and compares fresh coverage identity to the stored
+`coverage.json` digest without changing promotion semantics.
 
 See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
 expectations.

@@ -10,6 +10,7 @@ from harness_rsi.benchmarks import (
     init_benchmark,
     run_benchmark,
     write_coverage_report,
+    write_waiver_report,
 )
 from harness_rsi.cycle import run_experiment_cycle
 from harness_rsi.decisions import promote, reject
@@ -128,6 +129,18 @@ def benchmark_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_waivers(args: argparse.Namespace) -> int:
+    path = write_waiver_report(
+        args.benchmark,
+        as_of=args.as_of,
+        due_within_days=args.due_within_days,
+    )
+    report = read_json(path)
+    print(f"Wrote waiver lifecycle report to {path}")
+    print(readable_waiver_summary(report))
+    return 0
+
+
 def harness_create_candidate(args: argparse.Namespace) -> int:
     path = create_candidate_version(
         parent=args.parent,
@@ -186,6 +199,44 @@ def readable_coverage_summary(report: dict[str, object]) -> str:
         f"Coverage digest: {report.get('coverage_digest')}",
     ]
     return "\n".join(lines)
+
+
+def readable_waiver_summary(report: dict[str, object]) -> str:
+    lines = [
+        f"Benchmark: {report.get('benchmark')}",
+        f"Suite version: {report.get('suite_version')}",
+        f"As of: {report.get('as_of')}",
+        f"Due within days: {report.get('due_within_days')}",
+        f"Waivers: {report.get('waiver_count')}",
+        f"Waived missing cells: {report.get('waived_missing_count')}",
+        f"Waived covered cells: {report.get('waived_covered_count')}",
+        f"Active missing: {report.get('active_missing_count')}",
+        f"Retire candidates: {report.get('retire_candidate_count')}",
+        f"Review status: {readable_status_counts(report.get('review_status_counts', {}))}",
+        f"Next review: {report.get('next_review_by')}",
+        f"Owners: {readable_group_counts(report.get('by_owner', {}))}",
+        f"Review dates: {readable_group_counts(report.get('by_review_date', {}))}",
+        f"Coverage digest: {report.get('coverage_digest')}",
+        f"Stored coverage digest: {report.get('stored_coverage_digest')}",
+        f"Coverage digest matches stored: {report.get('coverage_digest_matches_stored')}",
+        f"Waiver lifecycle digest: {report.get('waiver_lifecycle_digest')}",
+    ]
+    return "\n".join(lines)
+
+
+def readable_status_counts(value: object) -> str:
+    if not isinstance(value, dict):
+        return "unavailable"
+    return ", ".join(
+        f"{name}={value.get(name, 0)}"
+        for name in ("overdue", "due_soon", "scheduled")
+    )
+
+
+def readable_group_counts(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    return ", ".join(f"{name}={value[name]['count']}" for name in sorted(value))
 
 
 def readable_split_counts(value: object) -> str:
@@ -267,6 +318,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_coverage_parser.add_argument("--benchmark", default="synthetic")
     benchmark_coverage_parser.set_defaults(func=benchmark_coverage)
+
+    benchmark_waivers_parser = benchmark_sub.add_parser(
+        "waivers",
+        help="Write waiver lifecycle report grouped by owner and review date.",
+    )
+    benchmark_waivers_parser.add_argument("--benchmark", default="synthetic")
+    benchmark_waivers_parser.add_argument(
+        "--as-of",
+        help="Review date in YYYY-MM-DD format. Defaults to today's UTC date.",
+    )
+    benchmark_waivers_parser.add_argument(
+        "--due-within-days",
+        type=int,
+        default=30,
+        help="Mark reviews due soon when review_by is within this many days.",
+    )
+    benchmark_waivers_parser.set_defaults(func=benchmark_waivers)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")
     harness_sub = harness.add_subparsers(dest="harness_command", required=True)

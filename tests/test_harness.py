@@ -132,6 +132,204 @@ def test_benchmark_coverage_command_writes_report(tmp_path: Path, capsys) -> Non
         ]
 
 
+def test_benchmark_waivers_command_writes_lifecycle_report(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "waivers",
+                    "--benchmark",
+                    "sim-v0",
+                    "--as-of",
+                    "2026-06-19",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Wrote waiver lifecycle report to" in output
+        assert "Waivers: 4" in output
+        assert "Waived missing cells: 4" in output
+        assert "Waived covered cells: 0" in output
+        assert "Active missing: 4" in output
+        assert "Retire candidates: 0" in output
+        assert "Review status: overdue=0, due_soon=0, scheduled=4" in output
+        assert "Next review: 2026-09-30" in output
+        assert "Owners: coding-evals=1, data-evals=1, eval-suite=2" in output
+        assert "Review dates: 2026-09-30=4" in output
+        assert "Coverage digest matches stored: True" in output
+        assert "waiver_lifecycle_digest" not in output
+
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        report = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "waiver_lifecycle.json"
+        )
+        assert report["benchmark"] == "sim-v0"
+        assert report["coverage_digest"] == coverage["coverage_digest"]
+        assert report["stored_coverage_digest"] == coverage["coverage_digest"]
+        assert report["coverage_digest_matches_stored"] is True
+        assert report["due_within_days"] == 30
+        assert report["waiver_count"] == 4
+        assert report["waived_missing_count"] == 4
+        assert report["waived_covered_count"] == 0
+        assert report["active_missing_count"] == 4
+        assert report["retire_candidate_count"] == 0
+        assert report["review_due_count"] == 0
+        assert report["review_status_counts"] == {
+            "overdue": 0,
+            "due_soon": 0,
+            "scheduled": 4,
+        }
+        assert report["next_review_by"] == "2026-09-30"
+        assert report["by_owner"]["eval-suite"] == {
+            "count": 2,
+            "active_missing_count": 2,
+            "retire_candidate_count": 0,
+            "review_due_count": 0,
+            "review_status_counts": {"overdue": 0, "due_soon": 0, "scheduled": 2},
+            "waivers": [
+                "mechanics/exact_eval/train",
+                "mechanics/exact_eval/heldout",
+            ],
+        }
+        assert report["by_review_date"]["2026-09-30"]["count"] == 4
+        assert {
+            "environment": "data_ops",
+            "family": "schema_reasoning",
+            "split": "regression",
+            "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+            "owner": "data-evals",
+            "tracking_ref": "CM-0012",
+            "review_by": "2026-09-30",
+            "expires_when": "Asset-backed schema fixtures land in sim-v0.",
+            "count": 0,
+            "status": "waived_missing",
+            "identity": "data_ops/schema_reasoning/regression",
+            "review_state": "scheduled",
+            "lifecycle_state": "active_missing",
+        } in report["waivers"]
+        assert report["waiver_lifecycle_digest"]
+
+
+def test_benchmark_waivers_command_marks_reviews_due(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "waivers",
+                    "--benchmark",
+                    "sim-v0",
+                    "--as-of",
+                    "2026-10-01",
+                ]
+            )
+            == 0
+        )
+
+        report = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "waiver_lifecycle.json"
+        )
+        assert report["review_due_count"] == 4
+        assert report["by_owner"]["data-evals"]["review_due_count"] == 1
+        assert report["review_status_counts"] == {
+            "overdue": 4,
+            "due_soon": 0,
+            "scheduled": 0,
+        }
+        assert {waiver["review_state"] for waiver in report["waivers"]} == {"overdue"}
+
+
+def test_benchmark_waivers_command_marks_due_soon(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "waivers",
+                    "--benchmark",
+                    "sim-v0",
+                    "--as-of",
+                    "2026-09-15",
+                    "--due-within-days",
+                    "30",
+                ]
+            )
+            == 0
+        )
+
+        report = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "waiver_lifecycle.json"
+        )
+        assert report["review_due_count"] == 4
+        assert report["review_status_counts"] == {
+            "overdue": 0,
+            "due_soon": 4,
+            "scheduled": 0,
+        }
+        assert {waiver["review_state"] for waiver in report["waivers"]} == {"due_soon"}
+
+
+def test_benchmark_waivers_report_detects_stale_stored_coverage_digest(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        manifest_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json"
+        manifest = read_json(manifest_path)
+        manifest["coverage_policy"]["waivers"][0]["owner"] = "changed-after-coverage"
+        write_json(manifest_path, manifest)
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "waivers",
+                    "--benchmark",
+                    "sim-v0",
+                    "--as-of",
+                    "2026-06-19",
+                ]
+            )
+            == 0
+        )
+
+        stored_coverage = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json"
+        )
+        report = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "waiver_lifecycle.json"
+        )
+        assert report["stored_coverage_digest"] == stored_coverage["coverage_digest"]
+        assert report["coverage_digest"] != stored_coverage["coverage_digest"]
+        assert report["coverage_digest_matches_stored"] is False
+
+
+def test_benchmark_waivers_command_rejects_bad_as_of_date(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "waivers",
+                    "--benchmark",
+                    "sim-v0",
+                    "--as-of",
+                    "10-01-2026",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "YYYY-MM-DD" in output.err
+
+
 def test_sim_v0_gate_passes_with_waived_missing_coverage(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init", "--name", "sim-v0"]) == 0

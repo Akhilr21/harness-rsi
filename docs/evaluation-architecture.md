@@ -128,6 +128,13 @@ coverage: rollout summarization in train, reset/replay in heldout and
 regression, and drift detection in regression. This changes local measurement
 coverage, not the external benchmark adapter boundary.
 
+The waiver lifecycle report is an alternate index over waiver metadata. It
+groups waived cells by owner and review date, carries tracking and expiry
+context, and preserves suite/coverage identity. It also reports whether fresh
+coverage identity still matches the stored `coverage.json` digest. It is
+separate from scoring and does not add a promotion check unless a later
+gate-policy change explicitly does so.
+
 ## Evaluator And Suite Digests
 
 Current run summaries record `task_digest`, `evaluator_digests`, and

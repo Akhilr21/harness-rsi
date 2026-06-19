@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -599,6 +599,135 @@ def write_coverage_report(benchmark: str) -> Path:
     return path
 
 
+def write_waiver_report(
+    benchmark: str,
+    *,
+    as_of: str | None = None,
+    due_within_days: int = 30,
+) -> Path:
+    report = build_waiver_report(
+        benchmark,
+        as_of=as_of,
+        due_within_days=due_within_days,
+    )
+    path = benchmark_dir(benchmark) / "waiver_lifecycle.json"
+    write_json(path, report)
+    return path
+
+
+def build_waiver_report(
+    benchmark: str,
+    *,
+    as_of: str | None = None,
+    due_within_days: int = 30,
+) -> dict[str, Any]:
+    if due_within_days < 0:
+        raise RuntimeError("due_within_days must be greater than or equal to 0.")
+    coverage = build_coverage_report(benchmark)
+    review_as_of = as_of or datetime.now(timezone.utc).date().isoformat()
+    validate_review_date(review_as_of)
+    stored_coverage_digest = read_coverage_digest(benchmark)
+    waivers = [
+        annotate_waiver_lifecycle(
+            cell,
+            as_of=review_as_of,
+            due_within_days=due_within_days,
+        )
+        for cell in coverage.get("waived_cells", [])
+    ]
+    review_status_counts = {
+        status: count_matching(waivers, "review_state", status)
+        for status in ("overdue", "due_soon", "scheduled")
+    }
+    report = {
+        "benchmark": benchmark,
+        "suite_version": coverage.get("suite_version"),
+        "suite_digest": coverage.get("suite_digest"),
+        "coverage_digest": coverage.get("coverage_digest"),
+        "stored_coverage_digest": stored_coverage_digest,
+        "coverage_digest_matches_stored": coverage.get("coverage_digest") == stored_coverage_digest,
+        "coverage_policy_digest": coverage.get("coverage_policy_digest"),
+        "as_of": review_as_of,
+        "due_within_days": due_within_days,
+        "waiver_count": len(waivers),
+        "waived_missing_count": count_matching(waivers, "status", "waived_missing"),
+        "waived_covered_count": count_matching(waivers, "status", "waived_covered"),
+        "active_missing_count": count_matching(waivers, "lifecycle_state", "active_missing"),
+        "retire_candidate_count": count_matching(waivers, "lifecycle_state", "retire_candidate"),
+        "review_status_counts": review_status_counts,
+        "review_due_count": review_status_counts["overdue"] + review_status_counts["due_soon"],
+        "next_review_by": next_review_date(waivers),
+        "by_owner": group_waivers(waivers, "owner"),
+        "by_review_date": group_waivers(waivers, "review_by"),
+        "waivers": waivers,
+    }
+    report["waiver_lifecycle_digest"] = digest_payload(report)
+    return report
+
+
+def annotate_waiver_lifecycle(
+    cell: dict[str, Any],
+    *,
+    as_of: str,
+    due_within_days: int,
+) -> dict[str, Any]:
+    as_of_date = datetime.strptime(as_of, "%Y-%m-%d").date()
+    review_date = datetime.strptime(str(cell["review_by"]), "%Y-%m-%d").date()
+    if review_date < as_of_date:
+        review_state = "overdue"
+    elif review_date <= as_of_date + timedelta(days=due_within_days):
+        review_state = "due_soon"
+    else:
+        review_state = "scheduled"
+    lifecycle_state = (
+        "retire_candidate"
+        if cell.get("status") == "waived_covered"
+        else "active_missing"
+    )
+    return {
+        **cell,
+        "identity": cell_identity_string(cell),
+        "review_state": review_state,
+        "lifecycle_state": lifecycle_state,
+    }
+
+
+def count_matching(items: list[dict[str, Any]], key: str, value: str) -> int:
+    return sum(1 for item in items if item.get(key) == value)
+
+
+def next_review_date(waivers: list[dict[str, Any]]) -> str | None:
+    dates = sorted(str(waiver["review_by"]) for waiver in waivers)
+    return dates[0] if dates else None
+
+
+def group_waivers(waivers: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+    for waiver in waivers:
+        group_key = str(waiver[key])
+        group = groups.setdefault(
+            group_key,
+            {
+                "count": 0,
+                "active_missing_count": 0,
+                "retire_candidate_count": 0,
+                "review_status_counts": {"overdue": 0, "due_soon": 0, "scheduled": 0},
+                "review_due_count": 0,
+                "waivers": [],
+            },
+        )
+        group["count"] += 1
+        if waiver["lifecycle_state"] == "active_missing":
+            group["active_missing_count"] += 1
+        if waiver["lifecycle_state"] == "retire_candidate":
+            group["retire_candidate_count"] += 1
+        group["review_status_counts"][waiver["review_state"]] += 1
+        if waiver["review_state"] in {"overdue", "due_soon"}:
+            group["review_due_count"] += 1
+        group["waivers"].append(waiver["identity"])
+    return {group_key: groups[group_key] for group_key in sorted(groups)}
+
+
 def build_coverage_report(benchmark: str) -> dict[str, Any]:
     root = benchmark_dir(benchmark)
     if not root.exists():
@@ -853,6 +982,10 @@ def missing_environment_family_split_cells(
 
 def cell_identity(cell: dict[str, Any]) -> tuple[str, str, str]:
     return (str(cell["environment"]), str(cell["family"]), str(cell["split"]))
+
+
+def cell_identity_string(cell: dict[str, Any]) -> str:
+    return "/".join(cell_identity(cell))
 
 
 def build_environment_family_matrix(

@@ -61,6 +61,8 @@ Every coverage-policy increment should record:
   score comparison, or only at the composite-gate boundary
 - expected artifact changes to `coverage.json`, gate decisions, composite
   gates, cycle summaries, rejection artifacts, and promoted harness lineage
+- lifecycle-report grouping keys, artifact paths, and whether the report changes
+  promotion semantics
 
 Missing required evidence should fail closed. A waived cell should be explicit
 evidence, not an absence that happens to pass. Waivers are acceptable only when
@@ -497,3 +499,45 @@ pressures explicit before a candidate can be promoted.
   experiment cycles, then decide which additional world-model families should
   become required in a later suite version. Add a waiver lifecycle report and
   composite-gate digest-boundary tests before any live simulator adapter.
+
+## CM-0014: Waiver Lifecycle Report
+
+- Date: 2026-06-19
+- Files changed: `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cli.py`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: waiver metadata is preserved in coverage and gate artifacts, but
+  the harness still needs a first-class query surface for measurement debt.
+  Reviewers should be able to ask which waivers are active, who owns them, and
+  which review dates are next without scanning raw coverage matrices.
+- Change made: added `harness-rsi benchmark waivers --benchmark <name>` with an
+  optional `--as-of YYYY-MM-DD` review date and `--due-within-days` window. The
+  command writes `.rsi/benchmarks/<name>/waiver_lifecycle.json` and prints a
+  concise summary grouped by owner and review date. The report carries suite
+  digest, fresh coverage digest, stored `coverage.json` digest,
+  coverage-policy digest, waiver identities, tracking references, review dates,
+  expiry conditions, lifecycle state, and review status as `overdue`,
+  `due_soon`, or `scheduled`.
+- Gate enforcement: no promotion semantics changed. Waived cells remain
+  non-blocking unless a later gate-policy change explicitly makes overdue or
+  expired waiver states promotion failures.
+- Frontier/world-model note: static world-model trace coverage now has a way to
+  keep deferred evidence visible by owner and review date. This helps prevent
+  frontier-model aggregate scores from hiding eval-suite debt, but it still does
+  not claim live simulator safety or Decart/Oasis runtime validation.
+- Validation run: `pytest` reported 56 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` and ran
+  `benchmark waivers --benchmark sim-v0 --as-of 2026-06-19
+  --due-within-days 30`, writing `waiver_lifecycle.json` with 4 waivers, 4
+  active missing cells, 0 retire candidates, `overdue=0`, `due_soon=0`,
+  `scheduled=4`, owners `coding-evals=1`, `data-evals=1`, `eval-suite=2`, and
+  matching fresh/stored coverage digests.
+- Observation: waiver owner and review metadata was present in artifacts, but
+  reviewers still had to scan those artifacts to answer which measurement debt
+  was active, who owned it, and what date came next.
+- Learning: waivers are measurement debt. Making them queryable by owner and
+  review date improves eval-suite accountability without changing the
+  fixed-model promotion contract.
+- Remediation: decide whether overdue waiver states should remain audit-only or
+  become future gate-policy inputs, then add composite-gate digest-boundary tests
+  before external benchmark or live world-model adapters.
