@@ -114,6 +114,12 @@ run. Gates fail when required cells are missing and `fail_on_missing_required`
 is enabled. Waived and unclassified missing cells are audit evidence only until
 promoted to required coverage.
 
+Waivers are now typed measurement debt. Each waiver must include a non-empty
+`reason`, `owner`, `tracking_ref`, and `review_by` date in `YYYY-MM-DD` format,
+with optional `expires_when` text for the condition that should retire the
+waiver. Duplicate waiver identities, unknown waiver keys, and required/waiver
+overlap are rejected as malformed suite policy.
+
 Rejected candidates should update the matrix. The point is not only to improve
 the next prompt; it is to make the next evaluation harder in the exact place the
 candidate failed.
@@ -152,6 +158,7 @@ layers:
 - protected-environment vetoes for safety, tool access, and regression-lock
   behavior
 - failure-family coverage minimums for environments that are gate-enforced
+- coverage digest consistency between run time and gate time
 - efficiency thresholds for attempts, tool calls, duration, and cost once those
   fields are reliable enough to gate on
 
@@ -160,8 +167,11 @@ A candidate that improves `knowledge_work` should not be promoted if it breaks
 `tool_use`, `world_model`, or another protected environment beyond policy.
 
 Missing required evidence fails closed. Waived cells are copied into reports and
-gate artifacts with reasons, and unclassified missing cells remain visible as
-backlog pressure for future suite versions.
+gate artifacts with reason, owner, tracking reference, review date, and expiry
+condition metadata. Unclassified missing cells remain visible as backlog
+pressure for future suite versions. If coverage policy changes after benchmark
+runs are produced, the gate rejects with `coverage_digest_mismatch` instead of
+mixing stale run evidence with fresh waiver metadata.
 
 ## Frontier And World-Model Pressure
 
@@ -181,7 +191,9 @@ problems, not live simulator integration. The current local proxy is
 impossible transitions, intervention selection, rollout summarization, and
 reset/replay. A future adapter can ingest simulator traces, but it should still
 produce local task rows, deterministic evaluator definitions, suite digests, and
-the same promotion gate evidence as `sim-v0`.
+the same promotion gate evidence as `sim-v0`. Waiver metadata is especially
+important here because plausible frontier-model rollouts can hide missing
+coverage for rare but important state failures.
 
 ## Testing Levels
 
@@ -232,13 +244,13 @@ profile materialization, split metadata, per-environment scores, and
 `gate_policy.json` enforcement. CM-0010 added coverage reporting plus
 suite/evaluator/coverage identity propagation. CM-0011 added required and
 waived coverage cells and gate enforcement for missing required coverage.
+CM-0012 added strict waiver metadata and coverage-digest drift rejection.
 
 The next increment should target:
 
-1. Add waiver owner/review metadata or expiry conditions for intentionally
-   missing family/split cells.
-2. Expand `world_model_static` toward Decart-style rollout trace cases while
+1. Expand `world_model_static` toward Decart-style rollout trace cases while
    keeping the adapter local and deterministic.
+2. Add a waiver lifecycle report or command grouped by owner and review date.
 3. Add digest mismatch tests at the composite-gate and promotion boundary.
 4. Decide when efficiency thresholds are reliable enough to gate attempts,
    duration, tool calls, and cost.

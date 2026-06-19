@@ -443,7 +443,10 @@ def gate_candidate(
         thresholds["max_environment_drop"],
         thresholds["protected_environments"],
     )
-    coverage_evidence = coverage_gate_evidence(comparison["benchmark"])
+    coverage_evidence = coverage_gate_evidence(
+        comparison["benchmark"],
+        expected_coverage_digest=comparison.get("coverage_digest"),
+    )
     coverage_failures = coverage_evidence["coverage_failures"]
     passed = (
         delta >= thresholds["min_delta"]
@@ -545,7 +548,10 @@ def find_coverage_failures(benchmark: str) -> list[dict[str, Any]]:
     return coverage_gate_evidence(benchmark)["coverage_failures"]
 
 
-def coverage_gate_evidence(benchmark: str) -> dict[str, Any]:
+def coverage_gate_evidence(
+    benchmark: str,
+    expected_coverage_digest: str | None = None,
+) -> dict[str, Any]:
     if not benchmark_dir(benchmark).exists():
         return empty_coverage_evidence()
     report = build_coverage_report(benchmark)
@@ -554,7 +560,19 @@ def coverage_gate_evidence(benchmark: str) -> dict[str, Any]:
         if report.get("coverage_policy", {}).get("fail_on_missing_required")
         else []
     )
+    current_coverage_digest = report.get("coverage_digest")
+    if expected_coverage_digest and current_coverage_digest != expected_coverage_digest:
+        failures = [
+            *failures,
+            {
+                "type": "coverage_digest_mismatch",
+                "expected_coverage_digest": expected_coverage_digest,
+                "current_coverage_digest": current_coverage_digest,
+                "status": "coverage_drift",
+            },
+        ]
     return {
+        "current_coverage_digest": current_coverage_digest,
         "coverage_policy_digest": report.get("coverage_policy_digest"),
         "coverage_failures": failures,
         "missing_required_cells": report.get("missing_required_cells", []),
@@ -565,6 +583,7 @@ def coverage_gate_evidence(benchmark: str) -> dict[str, Any]:
 
 def empty_coverage_evidence() -> dict[str, Any]:
     return {
+        "current_coverage_digest": None,
         "coverage_policy_digest": None,
         "coverage_failures": [],
         "missing_required_cells": [],
@@ -663,14 +682,76 @@ def normalize_coverage_policy(policy: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("coverage_policy.required must be a list.")
     if not isinstance(waivers, list):
         raise RuntimeError("coverage_policy.waivers must be a list.")
-    return {
+    normalized = {
         "fail_on_missing_required": bool(policy.get("fail_on_missing_required", True)),
-        "required": [normalize_policy_cell(cell, "required") for cell in required],
-        "waivers": [normalize_policy_cell(cell, "waiver") for cell in waivers],
+        "required": [normalize_required_cell(cell) for cell in required],
+        "waivers": [normalize_waiver_cell(cell) for cell in waivers],
+    }
+    validate_policy_cell_identities(normalized["required"], "required")
+    validate_policy_cell_identities(normalized["waivers"], "waiver")
+    validate_required_waiver_overlap(normalized["required"], normalized["waivers"])
+    return normalized
+
+
+def normalize_required_cell(cell: Any) -> dict[str, Any]:
+    check_policy_keys(cell, {"environment", "family", "split", "reason"}, "required")
+    normalized = normalize_policy_cell_base(cell, "required")
+    return {
+        **normalized,
+        "reason": str(cell.get("reason", "")),
     }
 
 
-def normalize_policy_cell(cell: Any, label: str) -> dict[str, Any]:
+def normalize_waiver_cell(cell: Any) -> dict[str, Any]:
+    check_policy_keys(
+        cell,
+        {
+            "environment",
+            "family",
+            "split",
+            "reason",
+            "owner",
+            "tracking_ref",
+            "review_by",
+            "expires_when",
+        },
+        "waiver",
+    )
+    normalized = normalize_policy_cell_base(cell, "waiver")
+    missing = [
+        key
+        for key in ("reason", "owner", "tracking_ref", "review_by")
+        if not str(cell.get(key, "")).strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            f"coverage_policy waiver cell is missing required metadata: {', '.join(missing)}."
+        )
+    review_by = str(cell["review_by"])
+    validate_review_date(review_by)
+    waiver = {
+        **normalized,
+        "reason": str(cell["reason"]),
+        "owner": str(cell["owner"]),
+        "tracking_ref": str(cell["tracking_ref"]),
+        "review_by": review_by,
+    }
+    if cell.get("expires_when"):
+        waiver["expires_when"] = str(cell["expires_when"])
+    return waiver
+
+
+def check_policy_keys(cell: Any, allowed: set[str], label: str) -> None:
+    if not isinstance(cell, dict):
+        return
+    unknown = sorted(set(cell) - allowed)
+    if unknown:
+        raise RuntimeError(
+            f"coverage_policy {label} cell has unknown keys: {', '.join(unknown)}."
+        )
+
+
+def normalize_policy_cell_base(cell: Any, label: str) -> dict[str, str]:
     if not isinstance(cell, dict):
         raise RuntimeError(f"coverage_policy {label} cells must be objects.")
     missing = [key for key in ("environment", "family", "split") if not cell.get(key)]
@@ -685,8 +766,45 @@ def normalize_policy_cell(cell: Any, label: str) -> dict[str, Any]:
         "environment": str(cell["environment"]),
         "family": str(cell["family"]),
         "split": split,
-        "reason": str(cell.get("reason", "")),
     }
+
+
+def validate_review_date(value: str) -> None:
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError as error:
+        raise RuntimeError(
+            f"coverage_policy waiver review_by must be YYYY-MM-DD: {value}."
+        ) from error
+    if parsed.strftime("%Y-%m-%d") != value:
+        raise RuntimeError(f"coverage_policy waiver review_by must be YYYY-MM-DD: {value}.")
+
+
+def validate_policy_cell_identities(cells: list[dict[str, Any]], label: str) -> None:
+    seen: set[tuple[str, str, str]] = set()
+    duplicates = []
+    for cell in cells:
+        identity = cell_identity(cell)
+        if identity in seen:
+            duplicates.append(identity)
+        seen.add(identity)
+    if duplicates:
+        formatted = ", ".join("/".join(identity) for identity in duplicates)
+        raise RuntimeError(f"coverage_policy {label} cells contain duplicates: {formatted}.")
+
+
+def validate_required_waiver_overlap(
+    required: list[dict[str, Any]],
+    waivers: list[dict[str, Any]],
+) -> None:
+    required_identities = {cell_identity(cell) for cell in required}
+    overlaps = sorted(required_identities & {cell_identity(cell) for cell in waivers})
+    if overlaps:
+        formatted = ", ".join("/".join(identity) for identity in overlaps)
+        raise RuntimeError(
+            "coverage_policy required and waiver cells overlap: "
+            f"{formatted}."
+        )
 
 
 def evaluate_policy_cells(

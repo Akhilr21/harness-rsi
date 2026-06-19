@@ -50,7 +50,8 @@ report-only.
 Every coverage-policy increment should record:
 
 - required cells by environment, failure family, and split
-- waived cells with a short reason, owner, and review date or expiry condition
+- waived cells with `reason`, `owner`, `tracking_ref`, `review_by`, and an
+  optional `expires_when` condition
 - report-only cells that are useful to track but not ready to block promotion
 - how waiver metadata is stored, such as manifest fields or a separate waiver
   file
@@ -63,7 +64,9 @@ Every coverage-policy increment should record:
 
 Missing required evidence should fail closed. A waived cell should be explicit
 evidence, not an absence that happens to pass. Waivers are acceptable only when
-they preserve the measurement claim for the suite version under review.
+they preserve the measurement claim for the suite version under review, and the
+suite should reject waiver entries that do not identify who owns the missing
+evidence, where it is tracked, and when it must be reviewed.
 
 This matters more, not less, for frontier-model and world-model work. Stronger
 frontier models can raise aggregate scores while still hiding localized harness
@@ -394,3 +397,54 @@ pressures explicit before a candidate can be promoted.
 - Remediation: add waiver owner/review metadata or expiry conditions, and expand
   `world_model_static` with Decart-style rollout trace cases before making more
   world-model families required.
+
+## CM-0012: Waiver Metadata Accountability
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/manifest.json`,
+  `src/harness_rsi/benchmarks.py`, `tests/test_harness.py`,
+  `tests/test_eval_suite_coverage.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: a waived missing coverage cell is still measurement debt. If the
+  suite lets a candidate promote while evidence is missing, the waiver should
+  say who owns the debt, when it will be reviewed, and what condition should end
+  the waiver.
+- Change made: `coverage_policy.waivers` now require `reason`, `owner`,
+  `tracking_ref`, and a `review_by` date in `YYYY-MM-DD` format, with optional
+  `expires_when`. Normalized waiver cells preserve that metadata in
+  `coverage.json` and gate artifacts. Malformed waiver lists, unknown waiver
+  keys, duplicate waiver identities, missing waiver metadata, malformed review
+  dates, and required/waiver overlap fail closed during benchmark
+  materialization or coverage report generation.
+- Gate enforcement: missing required cells still decide promotion. Waived cells
+  still do not block promotion by themselves, but their owner/review metadata
+  is now part of the coverage-policy digest and the gate artifact. A reviewer
+  can inspect exactly which missing evidence was allowed, who owns it, and what
+  tracking/review hook keeps it from becoming silent permanent sparsity. Gates
+  also reject `coverage_digest_mismatch` when coverage policy changes after run
+  evidence is produced.
+- Frontier/world-model note: this does not prove the suite is comprehensive or
+  safe for live frontier-model or world-model deployment. It narrows a more
+  practical risk: stronger models can improve aggregate scores while hiding
+  local failures in state consistency, drift detection, intervention selection,
+  reset/replay, tool sequencing, context selection, or recovery. Waiver metadata
+  keeps those missing pressures visible until they become real tasks or required
+  cells.
+- Validation run: targeted `pytest tests/test_eval_suite_coverage.py
+  tests/test_harness.py` reported 51 passing tests; targeted `ruff check`
+  passed. Tests cover waiver metadata in `sim-v0`, missing waiver metadata
+  rejection, unknown waiver key rejection, duplicate waiver rejection,
+  required/waiver overlap rejection, malformed `review_by` rejection, gate
+  artifacts preserving owner/review metadata for waived missing cells, and gate
+  rejection when coverage policy drifts after run evidence is produced.
+- Observation: once waivers become gate-adjacent evidence, they need the same
+  review discipline as code. Otherwise the harness can learn to route around
+  weak spots in the eval suite instead of improving against them.
+- Learning: harness-level RSI requires explicit management of evaluation debt.
+  The system is not only evaluating candidate harnesses; it is also evaluating
+  the trustworthiness of the benchmark surface used to promote them.
+- Remediation: add a first-class waiver lifecycle command or report that can
+  list active waivers by owner/review date, then expand `world_model_static`
+  with Decart-style rollout trace cases so the most important world-model
+  waivers can be retired or promoted into required cells.

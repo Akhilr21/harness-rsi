@@ -82,6 +82,10 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
             "family": "schema_reasoning",
             "split": "regression",
             "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+            "owner": "data-evals",
+            "tracking_ref": "CM-0012",
+            "review_by": "2026-09-30",
+            "expires_when": "Asset-backed schema fixtures land in sim-v0.",
             "count": 0,
             "status": "waived_missing",
         } in coverage["waived_missing_cells"]
@@ -126,7 +130,18 @@ def test_sim_v0_gate_passes_with_waived_missing_coverage(tmp_path: Path) -> None
         assert gate["decision"] == "promote"
         assert gate["coverage_failures"] == []
         assert gate["coverage_policy_digest"]
-        assert gate["waived_missing_cells"]
+        assert {
+            "environment": "data_ops",
+            "family": "schema_reasoning",
+            "split": "regression",
+            "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+            "owner": "data-evals",
+            "tracking_ref": "CM-0012",
+            "review_by": "2026-09-30",
+            "expires_when": "Asset-backed schema fixtures land in sim-v0.",
+            "count": 0,
+            "status": "waived_missing",
+        } in gate["waived_missing_cells"]
 
 
 def test_sim_v0_gate_rejects_missing_required_coverage(tmp_path: Path) -> None:
@@ -137,12 +152,13 @@ def test_sim_v0_gate_rejects_missing_required_coverage(tmp_path: Path) -> None:
         manifest["coverage_policy"]["required"].append(
             {
                 "environment": "data_ops",
-                "family": "schema_reasoning",
+                "family": "metric_selection",
                 "split": "regression",
                 "reason": "Test-only missing required cell.",
             }
         )
         write_json(manifest_path, manifest)
+        assert main(["benchmark", "coverage", "--benchmark", "sim-v0"]) == 0
         assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
         assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
         baseline_run, candidate_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-2:]
@@ -158,13 +174,46 @@ def test_sim_v0_gate_rejects_missing_required_coverage(tmp_path: Path) -> None:
         assert gate["coverage_failures"] == [
             {
                 "environment": "data_ops",
-                "family": "schema_reasoning",
+                "family": "metric_selection",
                 "split": "regression",
                 "reason": "Test-only missing required cell.",
                 "count": 0,
                 "status": "missing_required",
             }
         ]
+
+
+def test_sim_v0_gate_rejects_coverage_policy_drift_after_runs(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        baseline_run, candidate_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-2:]
+        baseline_coverage_digest = read_json(baseline_run / "results.json")["metadata"][
+            "coverage_digest"
+        ]
+
+        manifest_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json"
+        manifest = read_json(manifest_path)
+        manifest["coverage_policy"]["waivers"][0]["owner"] = "changed-after-run"
+        write_json(manifest_path, manifest)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["decision"] == "reject"
+        assert gate["coverage_digest"] == baseline_coverage_digest
+        assert gate["current_coverage_digest"] != baseline_coverage_digest
+        assert {
+            "type": "coverage_digest_mismatch",
+            "expected_coverage_digest": baseline_coverage_digest,
+            "current_coverage_digest": gate["current_coverage_digest"],
+            "status": "coverage_drift",
+        } in gate["coverage_failures"]
 
 
 def test_coverage_policy_rejects_malformed_required_shape(tmp_path: Path) -> None:
@@ -362,6 +411,9 @@ def test_gate_allows_waived_missing_coverage(tmp_path: Path) -> None:
             "family": "metric_selection",
             "split": "regression",
             "reason": "Covered by heldout until regression data fixtures exist.",
+            "owner": "data-evals",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2099-01-31",
         }
         write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
         baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)

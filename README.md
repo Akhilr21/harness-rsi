@@ -169,6 +169,8 @@ coverage digests, and compare/gate/cycle evidence preserves those identities.
 `sim-v0` also defines required and waived coverage cells. Missing required cells
 fail gates; waived and unclassified missing cells remain visible in artifacts
 without blocking promotion by themselves.
+Waived cells carry owner, tracking reference, review date, and expiry-condition
+metadata so intentionally missing evidence stays reviewable.
 The coverage command prints a concise summary and writes the full
 environment/family/split matrix to `.rsi/benchmarks/<name>/coverage.json`.
 
@@ -194,7 +196,8 @@ improvements in recovery, state tracking, tool use, triage, retries, and cost.
 The current Decart-style world-model coverage is represented by static
 `world_model_static` tasks in `sim-v0`; live simulator or external world-model
 adapters should wait until suite/evaluator digests and coverage reporting are in
-place and stable.
+place and stable. Gates also reject coverage-policy drift between run time and
+gate time.
 
 ## Artifact layout
 

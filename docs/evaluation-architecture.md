@@ -108,7 +108,8 @@ split, task counts, split counts, evaluator digests, and explicit missing cells.
 A missing high-priority family is recorded as either:
 
 - covered by at least one task in the split
-- intentionally waived with a reason
+- intentionally waived with reason, owner, tracking reference, review date, and
+  optional expiry condition
 - missing required evidence that blocks gates
 
 This keeps coverage review separate from scoring. The current runner can execute
@@ -116,7 +117,9 @@ tasks, enforce per-environment policy, and emit coverage reports. It does not
 turn every sparse cell into a failure. Only cells listed as required in the
 coverage policy can fail a gate. Waived and unclassified missing cells remain
 visible in `coverage.json` and gate artifacts without blocking promotion by
-themselves.
+themselves. Waiver metadata is strict: missing `reason`, `owner`,
+`tracking_ref`, or `review_by` rejects the suite policy, as do duplicate waiver
+cells, unknown waiver keys, and required/waiver overlap.
 
 ## Evaluator And Suite Digests
 
@@ -180,6 +183,7 @@ Current gate policy can enforce:
 - each gate-enforced environment must meet its floor or max-drop policy
 - protected environments can veto promotion even when aggregate score improves
 - required failure-family coverage must be present or explicitly waived
+- gate-time coverage digest must match the coverage digest recorded by the runs
 
 Roadmap policy should add:
 
@@ -187,7 +191,8 @@ Roadmap policy should add:
   those measurements are reliable enough
 
 This prevents an aggregate win from masking a local failure in a protected
-environment.
+environment. It also prevents a candidate from being promoted against coverage
+metadata that changed after the run evidence was produced.
 
 ## Version-Aware Promotion
 
@@ -268,7 +273,9 @@ The fixed-model rule still applies. A frontier-model run should pin the provider
 model for both `Hn` and `Hn+1`; otherwise a promotion can confuse model
 improvement with harness improvement. The current CLI supports explicit
 `--model` arguments for model-backed runs and rejects benchmark comparisons when
-the recorded models differ.
+the recorded models differ. Waiver review protects the complementary failure
+mode: a stronger model can make aggregate scores look good while sparse local
+coverage still hides harness failures.
 
 For world-model use cases, the harness should not merely ask whether a model can
 generate plausible next states. It should evaluate whether the surrounding

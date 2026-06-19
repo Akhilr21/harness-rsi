@@ -78,25 +78,41 @@
         "environment": "mechanics",
         "family": "exact_eval",
         "split": "train",
-        "reason": "Mechanics probes are regression-only until train pressure needs deterministic evaluator debugging."
+        "reason": "Mechanics probes are regression-only until train pressure needs deterministic evaluator debugging.",
+        "owner": "eval-suite",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Train split starts using mechanics probes for evaluator debugging."
       },
       {
         "environment": "mechanics",
         "family": "exact_eval",
         "split": "heldout",
-        "reason": "Mechanics probes are regression-only in sim-v0.1."
+        "reason": "Mechanics probes are regression-only in sim-v0.1.",
+        "owner": "eval-suite",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Heldout mechanics probes become part of promotion validation."
       },
       {
         "environment": "coding_micro",
         "family": "patch_targeting",
         "split": "regression",
-        "reason": "Patch-targeting regressions are deferred until repo-backed fixtures exist."
+        "reason": "Patch-targeting regressions are deferred until repo-backed fixtures exist.",
+        "owner": "coding-evals",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Repo-backed coding fixtures land in sim-v0."
       },
       {
         "environment": "data_ops",
         "family": "schema_reasoning",
         "split": "regression",
-        "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added."
+        "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+        "owner": "data-evals",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Asset-backed schema fixtures land in sim-v0."
       }
     ]
   },

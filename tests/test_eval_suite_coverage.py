@@ -210,6 +210,10 @@ def test_sim_v0_coverage_reports_required_and_waived_cells(tmp_path: Path) -> No
         assert waived
         assert all(is_coverage_cell(cell) for cell in required)
         assert all(is_coverage_cell(cell) and cell.get("reason") for cell in waived)
+        assert all(cell.get("owner") for cell in waived)
+        assert all(cell.get("tracking_ref") for cell in waived)
+        assert all(cell.get("review_by") for cell in waived)
+        assert all(cell.get("expires_when") for cell in waived)
         assert {cell_key(cell) for cell in waived}.isdisjoint(
             {cell_key(cell) for cell in missing_required}
         )
@@ -402,6 +406,231 @@ def test_malformed_coverage_waiver_rejects_init(tmp_path: Path, capsys) -> None:
         output = capsys.readouterr()
         assert "waiver" in output.err.lower()
         assert "coverage_policy.waivers" in output.err
+
+
+def test_coverage_waiver_missing_metadata_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-coverage-waiver-metadata" / "sources"
+        write_valid_source_profile(source)
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [],
+                        "waivers": [
+                            {
+                                "environment": "knowledge_work",
+                                "family": "objective_extraction",
+                                "split": "heldout",
+                                "reason": "Test waiver missing owner and review date.",
+                                "tracking_ref": "TEST-WAIVER",
+                            }
+                        ],
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "bad-coverage-waiver-metadata",
+                    "--profile",
+                    "bad-coverage-waiver-metadata",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "waiver" in output.err.lower()
+        assert "owner" in output.err
+        assert "review_by" in output.err
+
+
+def test_coverage_waiver_unknown_key_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-coverage-waiver-key" / "sources"
+        write_valid_source_profile(source)
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [],
+                        "waivers": [
+                            {
+                                "environment": "knowledge_work",
+                                "family": "objective_extraction",
+                                "split": "heldout",
+                                "reason": "Test waiver with typo-prone metadata.",
+                                "owner": "eval-suite",
+                                "tracking_ref": "TEST-WAIVER",
+                                "review_by": "2099-01-31",
+                                "ticket": "not-an-allowed-key",
+                            }
+                        ],
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "bad-coverage-waiver-key",
+                    "--profile",
+                    "bad-coverage-waiver-key",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "unknown keys" in output.err
+        assert "ticket" in output.err
+
+
+def test_coverage_waiver_bad_review_date_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-coverage-waiver-date" / "sources"
+        write_valid_source_profile(source)
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [],
+                        "waivers": [
+                            {
+                                "environment": "knowledge_work",
+                                "family": "objective_extraction",
+                                "split": "heldout",
+                                "reason": "Test waiver with malformed review date.",
+                                "owner": "eval-suite",
+                                "tracking_ref": "TEST-WAIVER",
+                                "review_by": "01-31-2099",
+                            }
+                        ],
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "bad-coverage-waiver-date",
+                    "--profile",
+                    "bad-coverage-waiver-date",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "review_by" in output.err
+        assert "YYYY-MM-DD" in output.err
+
+
+def test_duplicate_coverage_waivers_reject_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "duplicate-coverage-waiver" / "sources"
+        write_valid_source_profile(source)
+        waiver = {
+            "environment": "knowledge_work",
+            "family": "objective_extraction",
+            "split": "heldout",
+            "reason": "Duplicate waiver identity.",
+            "owner": "eval-suite",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2099-01-31",
+        }
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [],
+                        "waivers": [waiver, waiver],
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "duplicate-coverage-waiver",
+                    "--profile",
+                    "duplicate-coverage-waiver",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "duplicates" in output.err
+
+
+def test_required_and_waiver_overlap_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "overlap-coverage-policy" / "sources"
+        write_valid_source_profile(source)
+        cell = {
+            "environment": "knowledge_work",
+            "family": "objective_extraction",
+            "split": "heldout",
+            "reason": "Overlap test.",
+        }
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [cell],
+                        "waivers": [
+                            {
+                                **cell,
+                                "owner": "eval-suite",
+                                "tracking_ref": "TEST-WAIVER",
+                                "review_by": "2099-01-31",
+                            }
+                        ],
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "overlap-coverage-policy",
+                    "--profile",
+                    "overlap-coverage-policy",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "overlap" in output.err
 
 
 def test_cli_main_smoke_for_benchmark_commands(tmp_path: Path, capsys) -> None:
