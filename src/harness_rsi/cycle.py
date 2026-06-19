@@ -131,11 +131,23 @@ def run_experiment_cycle(
         regression_gate=regression_gate,
         decision="promote" if should_promote else "reject",
     )
+    composite_decision = read_json(composite_gate)
+    summary.update(
+        {
+            "suite_version": composite_decision.get("suite_version"),
+            "suite_digest": composite_decision.get("suite_digest"),
+            "coverage_digest": composite_decision.get("coverage_digest"),
+            "heldout_evaluator_digests": composite_decision.get("heldout_evaluator_digests"),
+            "regression_evaluator_digests": composite_decision.get(
+                "regression_evaluator_digests"
+            ),
+        }
+    )
     summary["steps"].append(
         {
             "name": "composite_gate",
             "gate": str(composite_gate),
-            "decision": read_json(composite_gate)["decision"],
+            "decision": composite_decision["decision"],
         }
     )
     if should_promote:
@@ -166,6 +178,8 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
         raise RuntimeError("Cannot compose gates for different baseline harnesses.")
     if heldout.get("candidate_harness_digest") != regression.get("candidate_harness_digest"):
         raise RuntimeError("Cannot compose gates for different candidate behavior digests.")
+    if heldout.get("suite_digest") != regression.get("suite_digest"):
+        raise RuntimeError("Cannot compose gates for different benchmark suite digests.")
     decided_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path = heldout_gate.parent / f"{heldout['candidate_harness']}-{decided_at}-composite-gate.json"
     write_json(
@@ -176,11 +190,16 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
             "candidate_harness": heldout["candidate_harness"],
             "model": heldout.get("model"),
             "benchmark": heldout.get("benchmark"),
+            "suite_version": heldout.get("suite_version"),
+            "suite_digest": heldout.get("suite_digest"),
+            "coverage_digest": heldout.get("coverage_digest"),
             "split": "heldout+regression",
             "baseline_run": heldout.get("baseline_run"),
             "candidate_run": heldout.get("candidate_run"),
             "pass_rate_delta": heldout.get("pass_rate_delta"),
             "candidate_harness_digest": heldout.get("candidate_harness_digest"),
+            "heldout_evaluator_digests": heldout.get("evaluator_digests", []),
+            "regression_evaluator_digests": regression.get("evaluator_digests", []),
             "heldout_gate": str(heldout_gate),
             "regression_gate": str(regression_gate),
             "heldout_baseline_run": heldout.get("baseline_run"),
@@ -212,6 +231,9 @@ def write_cycle_rejection(*, summary: dict[str, Any], composite_gate: Path) -> P
             "parent": summary["parent"],
             "candidate": summary["candidate"],
             "benchmark": summary["benchmark"],
+            "suite_version": composite.get("suite_version"),
+            "suite_digest": composite.get("suite_digest"),
+            "coverage_digest": composite.get("coverage_digest"),
             "rejection_reason": summary.get("rejection_reason"),
             "proposal": find_step_value(summary, "propose_patch", "proposal"),
             "heldout_gate": composite.get("heldout_gate"),
@@ -224,6 +246,10 @@ def write_cycle_rejection(*, summary: dict[str, Any], composite_gate: Path) -> P
             "metric_deltas": {
                 "heldout": read_json(Path(composite["heldout_gate"])).get("metric_deltas", {}),
                 "regression": read_json(Path(composite["regression_gate"])).get("metric_deltas", {}),
+            },
+            "evaluator_digests": {
+                "heldout": composite.get("heldout_evaluator_digests", []),
+                "regression": composite.get("regression_evaluator_digests", []),
             },
             "steps": summary["steps"],
         },

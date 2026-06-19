@@ -157,6 +157,16 @@ Gates now support aggregate pass-rate thresholds, regression-drop tolerance, and
 per-environment maximum drops. The roadmap is to add failure-family coverage and
 eventually efficiency thresholds for attempts, tool calls, duration, and cost.
 
+The reporting and identity layer is also part of the harness now. `sim-v0`
+materialization writes `coverage.json`, and the report can be regenerated with:
+
+```bash
+harness-rsi benchmark coverage --benchmark sim-v0
+```
+
+Compiled task rows carry evaluator digests, run metadata carries suite and
+coverage digests, and compare/gate/cycle evidence preserves those identities.
+
 See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
 expectations.
 
@@ -172,6 +182,14 @@ harness-rsi improve --model gpt-5.5
 
 `gpt-5.5` is the default model in the starter config, but every command keeps it
 overrideable so experiments can pin a model explicitly.
+
+Frontier-model experiments should keep the same fixed-model contract as mock and
+local runs: compare `Hn` and `Hn+1` with the same model, then look for harness
+improvements in recovery, state tracking, tool use, triage, retries, and cost.
+The current Decart-style world-model coverage is represented by static
+`world_model_static` tasks in `sim-v0`; live simulator or external world-model
+adapters should wait until suite/evaluator digests and coverage reporting are in
+place and stable.
 
 ## Artifact layout
 

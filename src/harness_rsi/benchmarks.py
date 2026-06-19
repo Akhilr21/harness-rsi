@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -151,22 +152,31 @@ def init_source_benchmark(*, name: str, profile: str) -> Path:
     if not sources.exists():
         raise RuntimeError(f"Benchmark source profile not found: {source}")
 
+    source_manifest = read_json(source / "manifest.json") if (source / "manifest.json").exists() else {}
+    suite_version = str(source_manifest.get("suite_version", profile))
     root = benchmark_dir(name)
     root.mkdir(parents=True, exist_ok=True)
     split_rows: dict[str, list[dict[str, Any]]] = {}
     for split in REQUIRED_SPLITS:
-        split_rows[split] = read_source_split(sources / split, split)
+        split_rows[split] = read_source_split(
+            sources / split,
+            split,
+            profile=profile,
+            suite_version=suite_version,
+        )
         write_jsonl(root / f"{split}.jsonl", split_rows[split])
 
     h0 = harness_path("H0")
     if not h0.exists():
         write_json(h0, DEFAULT_HARNESS | {"id": "H0", "parent": None})
 
-    manifest = read_json(source / "manifest.json") if (source / "manifest.json").exists() else {}
+    gate_policy = read_json(source / "gate_policy.json") if (source / "gate_policy.json").exists() else {}
+    manifest = dict(source_manifest)
     manifest.update(
         {
             "name": name,
             "profile": profile,
+            "suite_version": suite_version,
             "source_path": str(source),
             "splits": list(REQUIRED_SPLITS),
             "split_counts": {split: len(rows) for split, rows in split_rows.items()},
@@ -183,9 +193,11 @@ def init_source_benchmark(*, name: str, profile: str) -> Path:
             "baseline_harness": manifest.get("baseline_harness", "H0"),
         }
     )
+    manifest["suite_digest"] = suite_digest(manifest, split_rows, gate_policy)
     write_json(root / "manifest.json", manifest)
-    if (source / "gate_policy.json").exists():
-        write_json(root / "gate_policy.json", read_json(source / "gate_policy.json"))
+    if gate_policy:
+        write_json(root / "gate_policy.json", gate_policy)
+    write_coverage_report(name)
     return root
 
 
@@ -196,7 +208,13 @@ def source_benchmark_path(profile: str) -> Path:
     return PACKAGE_BENCHMARKS / profile
 
 
-def read_source_split(split_dir: Path, split: str) -> list[dict[str, Any]]:
+def read_source_split(
+    split_dir: Path,
+    split: str,
+    *,
+    profile: str,
+    suite_version: str,
+) -> list[dict[str, Any]]:
     if not split_dir.exists():
         raise RuntimeError(f"Benchmark source split not found: {split_dir}")
     rows: list[dict[str, Any]] = []
@@ -212,11 +230,62 @@ def read_source_split(split_dir: Path, split: str) -> list[dict[str, Any]]:
                 raise RuntimeError(f"Task {task_id} in {path} needs instruction and eval.")
             row.setdefault("environment", "default")
             row.setdefault("split", split)
+            row.setdefault("suite_version", suite_version)
+            row.setdefault("source", f"{profile}/{path.relative_to(source_benchmark_path(profile))}")
+            row["evaluator_digest"] = evaluator_digest(row["eval"])
             seen_ids.add(task_id)
             rows.append(row)
     if not rows:
         raise RuntimeError(f"Benchmark source split has no tasks: {split_dir}")
     return rows
+
+
+def evaluator_digest(evaluator: dict[str, Any]) -> str:
+    return digest_payload(evaluator)
+
+
+def digest_payload(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def suite_digest(
+    manifest: dict[str, Any],
+    split_rows: dict[str, list[dict[str, Any]]],
+    gate_policy: dict[str, Any],
+) -> str:
+    stable_manifest = {
+        key: value
+        for key, value in manifest.items()
+        if key not in {"source_path", "suite_digest"}
+    }
+    return digest_payload(
+        {
+            "manifest": stable_manifest,
+            "splits": {split: split_rows[split] for split in REQUIRED_SPLITS},
+            "gate_policy": gate_policy,
+        }
+    )
+
+
+def benchmark_metadata(benchmark: str) -> dict[str, Any]:
+    manifest_path = benchmark_dir(benchmark) / "manifest.json"
+    if not manifest_path.exists():
+        return {}
+    manifest = read_json(manifest_path)
+    metadata = {
+        "suite_version": manifest.get("suite_version"),
+        "suite_digest": manifest.get("suite_digest"),
+        "coverage_digest": read_coverage_digest(benchmark),
+    }
+    return {key: value for key, value in metadata.items() if value is not None}
+
+
+def read_coverage_digest(benchmark: str) -> str | None:
+    path = benchmark_dir(benchmark) / "coverage.json"
+    if not path.exists():
+        return None
+    return read_json(path).get("coverage_digest")
 
 
 def read_jsonl_with_path(path: Path) -> list[dict[str, Any]]:
@@ -251,7 +320,12 @@ def run_benchmark(
         config_path=config_path,
         model_override=model,
         mock=mock,
-        metadata={"benchmark": benchmark, "split": split, "harness": harness},
+        metadata={
+            "benchmark": benchmark,
+            "split": split,
+            "harness": harness,
+            **benchmark_metadata(benchmark),
+        },
     )
     return BenchmarkRun(benchmark=benchmark, split=split, harness=harness, run_dir=run_dir)
 
@@ -274,6 +348,8 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
         raise RuntimeError("Cannot compare runs from different benchmarks.")
     if baseline_metadata.get("split") != candidate_metadata.get("split"):
         raise RuntimeError("Cannot compare runs from different splits.")
+    if baseline_metadata.get("suite_digest") != candidate_metadata.get("suite_digest"):
+        raise RuntimeError("Cannot compare runs from different benchmark suite digests.")
     if baseline_task_ids != candidate_task_ids:
         raise RuntimeError("Cannot compare runs with different task IDs or task order.")
     if baseline.get("task_digest") != candidate.get("task_digest"):
@@ -285,6 +361,8 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
             {
                 "task_id": baseline_item["task_id"],
                 "environment": baseline_item.get("environment", "default"),
+                "family": baseline_item.get("family"),
+                "evaluator_digest": baseline_item.get("evaluator_digest"),
                 "baseline_passed": baseline_item["passed"],
                 "candidate_passed": candidate_item["passed"],
                 "delta": int(candidate_item["passed"]) - int(baseline_item["passed"]),
@@ -301,6 +379,10 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
         "candidate_harness_digest": candidate.get("harness_behavior_digest"),
         "benchmark": candidate_metadata.get("benchmark"),
         "split": candidate_metadata.get("split"),
+        "suite_version": candidate_metadata.get("suite_version"),
+        "suite_digest": candidate_metadata.get("suite_digest"),
+        "coverage_digest": candidate_metadata.get("coverage_digest"),
+        "evaluator_digests": candidate.get("evaluator_digests", []),
         "baseline_pass_rate": baseline["pass_rate"],
         "candidate_pass_rate": candidate["pass_rate"],
         "pass_rate_delta": candidate["pass_rate"] - baseline["pass_rate"],
@@ -450,6 +532,95 @@ def find_environment_failures(
                 }
             )
     return failures
+
+
+def write_coverage_report(benchmark: str) -> Path:
+    report = build_coverage_report(benchmark)
+    path = benchmark_dir(benchmark) / "coverage.json"
+    write_json(path, report)
+    return path
+
+
+def build_coverage_report(benchmark: str) -> dict[str, Any]:
+    root = benchmark_dir(benchmark)
+    if not root.exists():
+        raise RuntimeError(f"Benchmark not found: {root}")
+    manifest = read_json(root / "manifest.json") if (root / "manifest.json").exists() else {}
+    split_rows = {split: read_jsonl_with_path(root / f"{split}.jsonl") for split in REQUIRED_SPLITS}
+    environments = sorted(
+        {task.get("environment", "default") for rows in split_rows.values() for task in rows}
+    )
+    families = sorted({task.get("family", "unlabeled") for rows in split_rows.values() for task in rows})
+    matrix = build_environment_family_matrix(split_rows, environments, families)
+    environment_split_counts = build_split_counts(split_rows, "environment", environments)
+    family_split_counts = build_split_counts(split_rows, "family", families)
+    missing_environment_splits = missing_split_cells(environment_split_counts)
+    missing_family_splits = missing_split_cells(family_split_counts)
+    evaluator_digests = sorted(
+        {
+            task.get("evaluator_digest") or evaluator_digest(task.get("eval", {}))
+            for rows in split_rows.values()
+            for task in rows
+        }
+    )
+    report = {
+        "benchmark": benchmark,
+        "suite_version": manifest.get("suite_version"),
+        "suite_digest": manifest.get("suite_digest"),
+        "task_count": sum(len(rows) for rows in split_rows.values()),
+        "split_counts": {split: len(rows) for split, rows in split_rows.items()},
+        "environments": environments,
+        "families": families,
+        "environment_split_counts": environment_split_counts,
+        "family_split_counts": family_split_counts,
+        "environment_family_matrix": matrix,
+        "missing_environment_splits": missing_environment_splits,
+        "missing_family_splits": missing_family_splits,
+        "evaluator_digests": evaluator_digests,
+    }
+    report["coverage_digest"] = digest_payload(report)
+    return report
+
+
+def build_environment_family_matrix(
+    split_rows: dict[str, list[dict[str, Any]]],
+    environments: list[str],
+    families: list[str],
+) -> dict[str, dict[str, dict[str, int]]]:
+    matrix = {
+        environment: {
+            family: {split: 0 for split in REQUIRED_SPLITS}
+            for family in families
+        }
+        for environment in environments
+    }
+    for split, rows in split_rows.items():
+        for task in rows:
+            environment = task.get("environment", "default")
+            family = task.get("family", "unlabeled")
+            matrix[environment][family][split] += 1
+    return matrix
+
+
+def build_split_counts(
+    split_rows: dict[str, list[dict[str, Any]]],
+    key: str,
+    values: list[str],
+) -> dict[str, dict[str, int]]:
+    counts = {value: {split: 0 for split in REQUIRED_SPLITS} for value in values}
+    for split, rows in split_rows.items():
+        for task in rows:
+            counts[task.get(key, "unlabeled")][split] += 1
+    return counts
+
+
+def missing_split_cells(split_counts: dict[str, dict[str, int]]) -> list[dict[str, str]]:
+    missing = []
+    for name, counts in split_counts.items():
+        for split, count in counts.items():
+            if count == 0:
+                missing.append({"name": name, "split": split})
+    return missing
 
 
 def none_safe_delta(candidate: float | int | None, baseline: float | int | None) -> float | int | None:

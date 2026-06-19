@@ -1,5 +1,6 @@
 {
   "id": "sim-v0",
+  "suite_version": "sim-v0.1",
   "title": "Simulation Suite v0",
   "description": "Small, reviewable synthetic environments for measuring harness-level improvement before external benchmark adapters.",
   "baseline_harness": "H0",

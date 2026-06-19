@@ -84,6 +84,9 @@ def run_suite(
     tasks = read_jsonl(tasks_path)
     tasks_sha = task_digest(tasks)
     harness_sha = harness_behavior_digest(config)
+    evaluator_digests = sorted(
+        {task["evaluator_digest"] for task in tasks if task.get("evaluator_digest")}
+    )
     learnings = LEARNINGS.read_text() if LEARNINGS.exists() else ""
     started = datetime.now(timezone.utc)
     started_monotonic = time.perf_counter()
@@ -99,6 +102,7 @@ def run_suite(
             "tasks_path": str(tasks_path),
             "task_count": len(tasks),
             "task_digest": tasks_sha,
+            "evaluator_digests": evaluator_digests,
             "harness_behavior_digest": harness_sha,
             "metadata": metadata or {},
         },
@@ -139,6 +143,10 @@ def run_suite(
             event = {
                 "task_id": task["id"],
                 "environment": task.get("environment", "default"),
+                "family": task.get("family"),
+                "evaluator_digest": task.get("evaluator_digest"),
+                "suite_version": task.get("suite_version"),
+                "source": task.get("source"),
                 "attempt": attempt,
                 "attempt_count": attempt + 1,
                 "tool_calls": len(observations),
@@ -173,6 +181,7 @@ def run_suite(
         "duration_ms": duration_ms,
         "metadata": metadata or {},
         "task_digest": tasks_sha,
+        "evaluator_digests": evaluator_digests,
         "harness_behavior_digest": harness_sha,
         "tasks": len(results),
         "passed": passed,
@@ -192,6 +201,10 @@ def run_suite(
             {
                 "task_id": item["task_id"],
                 "environment": item.get("environment", "default"),
+                "family": item.get("family"),
+                "evaluator_digest": item.get("evaluator_digest"),
+                "suite_version": item.get("suite_version"),
+                "source": item.get("source"),
                 "passed": item["score"]["passed"],
                 "attempt": item["attempt"],
                 "attempt_count": item.get("attempt_count", item["attempt"] + 1),

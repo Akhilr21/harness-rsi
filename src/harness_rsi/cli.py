@@ -4,7 +4,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from harness_rsi.benchmarks import compare_runs, gate_candidate, init_benchmark, run_benchmark
+from harness_rsi.benchmarks import (
+    compare_runs,
+    gate_candidate,
+    init_benchmark,
+    run_benchmark,
+    write_coverage_report,
+)
 from harness_rsi.cycle import run_experiment_cycle
 from harness_rsi.decisions import promote, reject
 from harness_rsi.harness import DEFAULT_HARNESS, run_suite
@@ -110,6 +116,13 @@ def benchmark_gate(args: argparse.Namespace) -> int:
         max_environment_drop=args.max_environment_drop,
     )
     print(f"Wrote gate decision to {path}")
+    print(readable_json(read_json(path)))
+    return 0
+
+
+def benchmark_coverage(args: argparse.Namespace) -> int:
+    path = write_coverage_report(args.benchmark)
+    print(f"Wrote coverage report to {path}")
     print(readable_json(read_json(path)))
     return 0
 
@@ -221,6 +234,13 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_gate_parser.add_argument("--max-allowed-drop", type=float, default=0.0)
     benchmark_gate_parser.add_argument("--max-environment-drop", type=float)
     benchmark_gate_parser.set_defaults(func=benchmark_gate)
+
+    benchmark_coverage_parser = benchmark_sub.add_parser(
+        "coverage",
+        help="Write environment/family/split coverage report for a benchmark.",
+    )
+    benchmark_coverage_parser.add_argument("--benchmark", default="synthetic")
+    benchmark_coverage_parser.set_defaults(func=benchmark_coverage)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")
     harness_sub = harness.add_subparsers(dest="harness_command", required=True)

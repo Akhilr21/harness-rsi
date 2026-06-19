@@ -27,7 +27,7 @@ Every meaningful eval-suite change should record:
 
 - task sources added, removed, or changed
 - affected environments, failure families, and splits
-- evaluator changes and any digest changes
+- coverage-report changes and any suite/evaluator digest changes
 - gate-policy changes and expected promotion impact
 - validation commands and artifact paths
 - migration or backfill plan for prior runs if old evidence is no longer
@@ -206,8 +206,9 @@ coverage should still explain the source and failure family of the new cases.
 - Learning: rejected candidates are as valuable as promoted ones for harness RSI.
   They need explicit artifacts so failed improvement hypotheses become future
   training/evaluation material.
-- Remediation: next increment should add policy configuration that can gate on
-  environment-specific regressions and eventually cost/latency thresholds.
+- Remediation: CM-0009 added policy configuration for environment-specific
+  regressions. Cost and latency thresholds remain future work once those
+  measurements are reliable enough.
 
 ## CM-0008: Enhanced Eval-Suite Roadmap
 
@@ -262,7 +263,52 @@ coverage should still explain the source and failure family of the new cases.
 - Learning: the suite should stay as data plus policy around the existing
   runner. Creating separate training and evaluation runtimes would add
   complexity without improving the measurement claim yet.
-- Remediation: next increment should add failure-family coverage reporting,
-  evaluator digest/version fields, and explicit policy tests for malformed
-  source profiles before adding Terminal-Bench, SWE-bench, or tau-style
-  adapters.
+- Remediation: CM-0010 added failure-family coverage reporting, evaluator
+  digest/version fields, and malformed source-profile tests. External adapters
+  should still wait until required coverage cells and waivers are explicit.
+
+## CM-0010: Coverage Reporting And Digest Identity
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/manifest.json`,
+  `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cli.py`,
+  `src/harness_rsi/harness.py`, `src/harness_rsi/cycle.py`,
+  `src/harness_rsi/versions.py`, `tests/test_harness.py`,
+  `tests/test_eval_suite_coverage.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: before adding external adapters or live world-model integrations,
+  `sim-v0` needs first-class failure-family coverage reporting plus explicit
+  suite/evaluator identity fields so reviewers can tell whether a candidate is
+  being measured against the same suite, the same evaluators, and the same gate
+  policy.
+- Change made: added `suite_version` to the committed `sim-v0` manifest; added
+  evaluator digests to materialized task rows; added stable suite and coverage
+  digests; added `harness-rsi benchmark coverage`; wrote `coverage.json` during
+  source benchmark materialization; propagated suite, coverage, and evaluator
+  identity through run summaries, comparisons, gates, composite gates, cycle
+  summaries, rejected-cycle decision artifacts, and promoted harness lineage.
+  Added tests for coverage matrices, digest stability, malformed source
+  profiles, run metadata, and sim-v0 cycle identity.
+- Frontier/world-model note: keep frontier-model experiments on the fixed-model
+  A/B contract. Treat Decart-style world-model work as local trace-evaluation
+  probes in `world_model_static` until coverage and digest artifacts are stable.
+- Validation run: `pytest` reported 37 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Manual smoke test in `/private/tmp` materialized
+  `sim-v0`, ran `benchmark coverage --benchmark sim-v0`, and ran
+  `experiment cycle --parent H0 --candidate H1 --benchmark sim-v0 --mock
+  --no-promote`. The smoke produced `coverage.json`, a rejected cycle summary,
+  a composite gate, and a rejection artifact carrying `suite_version`,
+  `suite_digest`, `coverage_digest`, and heldout/regression evaluator digests.
+- Observation: coverage reporting immediately showed that many family/split
+  cells are intentionally sparse. That is useful evidence, but it should remain
+  report-only until the project has explicit required cells and waiver semantics.
+- Learning: CM-0009 made `sim-v0` executable and policy-aware; the next risk is
+  evidence identity. If suite, evaluator, and coverage identity are implicit,
+  future gates can be hard to audit even when the runner behaves correctly.
+  Coverage reporting also makes clear that harness RSI is not just score
+  improvement; it is the discipline of deciding which failures become durable
+  evaluation pressure.
+- Remediation: define required versus waived coverage cells, add waiver metadata
+  to the suite manifest or a separate waiver file, and only then promote missing
+  family coverage from report-only evidence into gate enforcement.

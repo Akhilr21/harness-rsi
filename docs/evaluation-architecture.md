@@ -95,6 +95,50 @@ example, a `tool_use` regression should not be moved into `train` merely because
 it is useful proposal evidence; it should be copied or distilled into a train
 probe while the protected regression case remains protected.
 
+## Failure-Family Coverage Reporting
+
+`sim-v0` task rows carry `environment` and `family` labels, and benchmark
+materialization writes a first-class `coverage.json` report before those labels
+become hard gate inputs.
+
+The report is derived from the same source profile that
+`harness-rsi benchmark init --name sim-v0` materializes into
+`.rsi/benchmarks/sim-v0`. It shows an environment-by-family matrix for each
+split, task counts, split counts, evaluator digests, and explicit missing cells.
+A missing high-priority family should eventually be recorded as either:
+
+- covered by at least one task in the split
+- intentionally waived with a reason
+- missing and therefore not ready for gate enforcement
+
+This keeps coverage review separate from scoring. The current runner can execute
+tasks, enforce per-environment policy, and emit coverage reports. It does not
+yet fail gates on family coverage; missing cells are report-only until required
+cells and waivers are explicit.
+
+## Evaluator And Suite Digests
+
+Current run summaries record `task_digest`, `evaluator_digests`, and
+`harness_behavior_digest`.
+`benchmark compare` rejects task-digest mismatches, and promotion rejects missing
+or mismatched candidate behavior digests.
+
+Source benchmark materialization also writes explicit identity fields so
+reviewers can see what changed without reverse-engineering a task hash:
+
+- `suite_digest`: canonical hash of the benchmark manifest, source task rows by
+  split, and gate policy used to materialize the suite.
+- `evaluator_digest`: canonical hash of deterministic evaluator definitions,
+  attached to compiled task rows and carried into run/gate evidence.
+- `suite_version`: human-readable suite version or profile ID, such as
+  `sim-v0.1`.
+
+These fields appear in run summaries, comparisons, gates, composite gates, cycle
+summaries, rejected-cycle decision artifacts, and promoted harness lineage where
+applicable. They do not replace `task_digest`; they make the same comparability
+invariant easier to audit and eventually allow evaluator-only changes to be
+reviewed as measurement changes.
+
 ## Promotion Gate
 
 A candidate harness can be promoted only when evidence says it is better or at
@@ -218,6 +262,12 @@ be very strong. That means useful harness improvement often appears as:
 - better memory selection
 - better state tracking across long tasks
 
+The fixed-model rule still applies. A frontier-model run should pin the provider
+model for both `Hn` and `Hn+1`; otherwise a promotion can confuse model
+improvement with harness improvement. The current CLI supports explicit
+`--model` arguments for model-backed runs and rejects benchmark comparisons when
+the recorded models differ.
+
 For world-model use cases, the harness should not merely ask whether a model can
 generate plausible next states. It should evaluate whether the surrounding
 system preserves state consistency, detects drift, selects interventions, and
@@ -250,6 +300,11 @@ not just answering text; it is rolling forward a simulated state from actions.
 The harness question becomes: can the surrounding system evaluate state
 consistency, detect incoherence, choose interventions, and improve rollout
 policy without changing the underlying world model?
+
+The current repo only models this with static text probes in
+`world_model_static`. That is intentional for now: the next useful step is to
+make trace identity, evaluator identity, and coverage visible before adding a
+live simulator adapter.
 
 Initial synthetic probes:
 

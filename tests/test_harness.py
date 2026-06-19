@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from harness_rsi.benchmarks import compare_runs, gate_candidate
+from harness_rsi.benchmarks import compare_runs, evaluator_digest, gate_candidate
 from harness_rsi.cli import main
 from harness_rsi.cycle import run_experiment_cycle
 from harness_rsi.harness import harness_behavior_digest
-from harness_rsi.io import read_json, write_json
+from harness_rsi.io import read_json, read_jsonl, write_json
 from harness_rsi.versions import (
     create_candidate_version,
     list_harness_versions,
@@ -57,14 +58,73 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         root = tmp_path / ".rsi" / "benchmarks" / "sim-v0"
         manifest = read_json(root / "manifest.json")
         assert manifest["profile"] == "sim-v0"
+        assert manifest["suite_version"] == "sim-v0.1"
+        assert manifest["suite_digest"]
         assert manifest["split_counts"] == {"heldout": 10, "regression": 7, "train": 10}
         assert "world_model_static" in manifest["environments"]
         assert "impossible_transition" in manifest["families"]
         assert (root / "gate_policy.json").exists()
-        heldout = (root / "heldout.jsonl").read_text()
-        assert "kw_heldout_decision_001" in heldout
-        assert '"split": "heldout"' in heldout
+        heldout = read_jsonl(root / "heldout.jsonl")
+        heldout_task = next(row for row in heldout if row["id"] == "kw_heldout_decision_001")
+        assert heldout_task["split"] == "heldout"
+        assert heldout_task["suite_version"] == "sim-v0.1"
+        assert heldout_task["evaluator_digest"] == evaluator_digest(heldout_task["eval"])
+        coverage = read_json(root / "coverage.json")
+        assert coverage["suite_digest"] == manifest["suite_digest"]
+        assert coverage["split_counts"] == {"heldout": 10, "regression": 7, "train": 10}
+        assert coverage["environment_family_matrix"]["world_model_static"][
+            "impossible_transition"
+        ]["heldout"] == 1
+        assert coverage["coverage_digest"]
         assert (tmp_path / ".rsi" / "harnesses" / "H0.json").exists()
+
+
+def test_benchmark_coverage_command_writes_report(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "coverage", "--benchmark", "sim-v0"]) == 0
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        assert coverage["task_count"] == 27
+        assert coverage["environment_split_counts"]["knowledge_work"] == {
+            "heldout": 2,
+            "regression": 2,
+            "train": 2,
+        }
+        assert {"name": "data_ops", "split": "regression"} in coverage[
+            "missing_environment_splits"
+        ]
+
+
+def test_source_benchmark_profile_rejects_duplicate_task_ids(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_minimal_source_profile(
+            tmp_path / "benchmarks" / "bad-profile",
+            train_rows=[
+                {
+                    "id": "duplicate",
+                    "instruction": "Return yes.",
+                    "eval": {"type": "exact", "expected": "yes"},
+                },
+                {
+                    "id": "duplicate",
+                    "instruction": "Return no.",
+                    "eval": {"type": "exact", "expected": "no"},
+                },
+            ],
+        )
+        assert main(["benchmark", "init", "--name", "bad", "--profile", "bad-profile"]) == 1
+
+
+def test_sim_v0_runs_record_suite_metadata(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        manifest = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json")
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        results = read_json(sorted((tmp_path / ".rsi" / "runs").iterdir())[-1] / "results.json")
+        assert results["metadata"]["suite_version"] == "sim-v0.1"
+        assert results["metadata"]["suite_digest"] == manifest["suite_digest"]
+        assert results["metadata"]["coverage_digest"] == coverage["coverage_digest"]
 
 
 def test_benchmark_run_records_metadata(tmp_path: Path) -> None:
@@ -517,6 +577,38 @@ def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
         assert config["status"] == "candidate"
 
 
+def test_experiment_cycle_records_suite_identity_for_sim_v0(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        manifest = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json")
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        cycle_path = run_experiment_cycle(
+            parent="H0",
+            candidate="H1",
+            benchmark="sim-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=False,
+        )
+        cycle = read_json(cycle_path)
+        composite_step = next(step for step in cycle["steps"] if step["name"] == "composite_gate")
+        composite = read_json(Path(composite_step["gate"]))
+        decision = read_json(Path(cycle["decision_artifact"]))
+        assert cycle["suite_version"] == "sim-v0.1"
+        assert cycle["suite_digest"] == manifest["suite_digest"]
+        assert cycle["coverage_digest"] == coverage["coverage_digest"]
+        assert composite["suite_digest"] == manifest["suite_digest"]
+        assert composite["coverage_digest"] == coverage["coverage_digest"]
+        assert composite["heldout_evaluator_digests"]
+        assert composite["regression_evaluator_digests"]
+        assert decision["suite_digest"] == manifest["suite_digest"]
+        assert decision["evaluator_digests"]["heldout"]
+        assert decision["evaluator_digests"]["regression"]
+
+
 def write_fake_run(
     path: Path,
     *,
@@ -551,6 +643,23 @@ def write_fake_run(
         },
     )
     return path
+
+
+def write_minimal_source_profile(path: Path, train_rows: list[dict[str, object]]) -> None:
+    write_json(path / "manifest.json", {"id": path.name, "suite_version": f"{path.name}.1"})
+    for split in ("train", "heldout", "regression"):
+        rows = train_rows if split == "train" else [
+            {
+                "id": f"{split}-task",
+                "instruction": "Return ok.",
+                "eval": {"type": "exact", "expected": "ok"},
+            }
+        ]
+        split_dir = path / "sources" / split
+        split_dir.mkdir(parents=True, exist_ok=True)
+        (split_dir / "tasks.jsonl").write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+        )
 
 
 def write_fake_environment_run(

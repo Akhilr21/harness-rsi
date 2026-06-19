@@ -50,6 +50,10 @@ Every task should carry enough metadata to explain why it exists:
 - fixture or seed version when relevant
 
 No task should enter `sim-v0` if its source cannot be explained or replayed.
+CM-0009 already gives `sim-v0` a committed manifest, source rows, split
+materialization, family labels, and a gate policy. The next increment should make
+those identities visible in reports and artifacts rather than adding a second
+runner.
 
 ## Split Contract
 
@@ -86,9 +90,49 @@ Before an environment becomes gate-enforced, its high-priority families should
 have at least one train task, one heldout task, and one regression task or a
 documented waiver.
 
+Implemented report shape:
+
+- rows: environments such as `knowledge_work`, `coding_micro`, `data_ops`,
+  `customer_support`, `world_model_static`, and `mechanics`
+- columns: failure families seen in the selected suite profile
+- cells: task count by split for each environment/family pair
+- summary: missing split cells, total task count, suite digest, coverage digest,
+  and evaluator digest coverage
+
+CLI:
+
+```bash
+harness-rsi benchmark coverage --benchmark sim-v0
+```
+
+The command reads the materialized `.rsi/benchmarks/sim-v0` copy, writes
+`coverage.json`, and reports missing environment/family split cells. The current
+version is report-only; gate enforcement for missing required cells should come
+after required cells and waivers are explicit.
+
 Rejected candidates should update the matrix. The point is not only to improve
 the next prompt; it is to make the next evaluation harder in the exact place the
 candidate failed.
+
+## Evaluator And Suite Digests
+
+The current runner records `task_digest` and `harness_behavior_digest`. That is
+enough to reject incompatible comparisons, but it hides whether a change came
+from task instructions, evaluator definitions, manifest metadata, or gate policy.
+
+The implemented identity layer adds:
+
+- `suite_digest`: canonical hash of manifest metadata, source task rows, split
+  membership, and gate policy
+- `evaluator_digest`: canonical hash of deterministic evaluator definitions
+- `suite_version`: the named profile version, starting with `sim-v0.1`
+
+Digest fields are written into run summaries, comparisons, gates, composite
+gates, cycle summaries, rejected decision artifacts, promoted harness lineage,
+and coverage reports. They should also appear in change-management entries
+whenever task data, evaluator semantics, or gate policy changes. This makes
+evaluator/suite edits reviewable measurement changes instead of quiet fixture
+churn.
 
 ## Gate Policy
 
@@ -114,6 +158,26 @@ A candidate that improves `knowledge_work` should not be promoted if it breaks
 Missing evidence should fail closed unless the change-management entry records
 an explicit waiver and the reason that waiver is acceptable for the current
 suite version.
+
+## Frontier And World-Model Pressure
+
+Frontier-model interaction should preserve the project invariant: fixed model,
+changed harness. A stronger model does not reduce the need for harness evidence;
+it changes where improvement is likely to show up:
+
+- fewer retries or tool calls for the same score
+- better recovery after a failed attempt
+- safer tool sequencing under ambiguous instructions
+- better memory and context selection
+- better state tracking across longer traces
+
+Decart/Oasis-style world-model use cases should start as trace-evaluation
+problems, not live simulator integration. The current local proxy is
+`world_model_static`, with families such as state consistency, drift detection,
+impossible transitions, intervention selection, rollout summarization, and
+reset/replay. A future adapter can ingest simulator traces, but it should still
+produce local task rows, deterministic evaluator definitions, suite digests, and
+the same promotion gate evidence as `sim-v0`.
 
 ## Testing Levels
 
@@ -141,7 +205,7 @@ miscellaneous test data churn. Each meaningful suite change should record:
 
 - source and rationale for new or changed tasks
 - affected environments, failure families, and splits
-- evaluator changes and any digest changes
+- coverage-report changes and any suite/evaluator digest changes
 - gate-policy changes and expected promotion impact
 - validation commands and artifact paths
 - migration or backfill plan for prior runs when old evidence is no longer
@@ -159,13 +223,19 @@ the harness.
 
 ## Near-Term Milestones
 
-1. Add a `sim-v0` manifest with suite version, environments, families, and split
-   counts.
-2. Add task metadata for source, failure family, and evaluator digest.
-3. Promote `per_environment` from evidence output into configurable gate policy.
-4. Add a failure-family coverage report and fail-closed behavior for missing
-   required cells.
-5. Add policy tests that prove aggregate wins cannot mask environment-specific
-   regressions.
-6. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
+CM-0009 completed the first foundation: committed `sim-v0` sources, benchmark
+profile materialization, split metadata, per-environment scores, and
+`gate_policy.json` enforcement. CM-0010 added coverage reporting plus
+suite/evaluator/coverage identity propagation.
+
+The next increment should target:
+
+1. Decide which coverage cells are required, waived, or report-only before
+   making missing coverage fail gates.
+2. Add explicit waiver files or manifest fields for intentionally missing
+   family/split cells.
+3. Expand `world_model_static` toward Decart-style rollout trace cases while
+   keeping the adapter local and deterministic.
+4. Add digest mismatch tests at the composite-gate and promotion boundary.
+5. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.

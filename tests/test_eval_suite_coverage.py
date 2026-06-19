@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from harness_rsi.benchmarks import compare_runs
+from harness_rsi.benchmarks import compare_runs, evaluator_digest, suite_digest
 from harness_rsi.cli import main
 from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, read_jsonl
@@ -155,6 +156,163 @@ def test_mock_proposal_records_source_run_and_candidate_lineage(tmp_path: Path) 
         assert candidate["lineage"] == {"parent": "H0", "proposal": str(proposal_path)}
 
 
+def test_sim_v0_materialized_coverage_reports_family_matrix(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+
+        root = tmp_path / ".rsi" / "benchmarks" / "sim-v0"
+        manifest = read_json(root / "manifest.json")
+        coverage = read_json(root / "coverage.json")
+        split_families = {
+            split: {row["family"] for row in read_jsonl(root / f"{split}.jsonl")}
+            for split in ("train", "heldout", "regression")
+        }
+        all_families = sorted(set().union(*split_families.values()))
+
+        assert manifest["families"] == all_families
+        assert coverage["families"] == all_families
+        assert coverage["suite_digest"] == manifest["suite_digest"]
+        assert coverage["task_count"] == sum(manifest["split_counts"].values())
+        assert set(manifest["families"]) >= {
+            "failure_signal",
+            "impossible_transition",
+            "promoted_behavior",
+            "regex_eval",
+        }
+        assert split_families["train"] >= {"failure_signal", "policy_following"}
+        assert split_families["heldout"] >= {"impossible_transition", "tool_sequence"}
+        assert split_families["regression"] >= {"promoted_behavior", "exact_eval"}
+        assert coverage["family_split_counts"]["failure_signal"] == {
+            "train": 1,
+            "heldout": 0,
+            "regression": 0,
+        }
+        assert coverage["environment_family_matrix"]["coding_micro"]["failure_signal"][
+            "train"
+        ] == 1
+        assert {"name": "failure_signal", "split": "heldout"} in coverage[
+            "missing_family_splits"
+        ]
+        assert coverage["coverage_digest"]
+
+
+def test_suite_and_evaluator_digests_are_stable_and_evaluator_sensitive() -> None:
+    evaluator = {"type": "contains", "expected": "heldout"}
+    same_evaluator_reordered = {"expected": "heldout", "type": "contains"}
+    changed_evaluator = {"type": "contains", "expected": "regression"}
+
+    assert evaluator_digest(evaluator) == evaluator_digest(same_evaluator_reordered)
+    assert evaluator_digest(evaluator) != evaluator_digest(changed_evaluator)
+
+    split_rows = {
+        "train": [source_task("train-task", "train", evaluator)],
+        "heldout": [source_task("heldout-task", "heldout", same_evaluator_reordered)],
+        "regression": [source_task("regression-task", "regression", evaluator)],
+    }
+    same_split_rows_reordered = {
+        "train": [source_task_reordered("train-task", "train", same_evaluator_reordered)],
+        "heldout": [source_task_reordered("heldout-task", "heldout", evaluator)],
+        "regression": [source_task_reordered("regression-task", "regression", evaluator)],
+    }
+    changed_split_rows = {
+        **split_rows,
+        "heldout": [source_task("heldout-task", "heldout", changed_evaluator)],
+    }
+    manifest = {
+        "name": "digest-suite",
+        "suite_version": "digest-suite.1",
+        "source_path": "/tmp/source-a",
+        "suite_digest": "old-digest",
+    }
+    same_manifest_reordered = {
+        "suite_digest": "new-digest",
+        "source_path": "/tmp/source-b",
+        "suite_version": "digest-suite.1",
+        "name": "digest-suite",
+    }
+    gate_policy = {"heldout": {"min_pass_rate_delta": 0}}
+
+    base_digest = suite_digest(manifest, split_rows, gate_policy)
+    assert base_digest == suite_digest(same_manifest_reordered, same_split_rows_reordered, gate_policy)
+    assert base_digest != suite_digest(manifest, changed_split_rows, gate_policy)
+
+
+def test_malformed_benchmark_source_invalid_jsonl_reports_path_and_line(
+    tmp_path: Path, capsys
+) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-json" / "sources"
+        write_source_split(source, "train", ['{"id": "bad-task"'])
+        write_source_split(source, "heldout", [valid_task_line("heldout-task", "heldout")])
+        write_source_split(source, "regression", [valid_task_line("regression-task", "regression")])
+
+        assert main(["benchmark", "init", "--name", "bad-json", "--profile", "bad-json"]) == 1
+        output = capsys.readouterr()
+        assert "Invalid JSONL at" in output.err
+        assert "bad-json/sources/train/tasks.jsonl:1" in output.err
+
+
+def test_malformed_benchmark_source_rejects_missing_eval(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "missing-eval" / "sources"
+        missing_eval = {
+            "id": "missing-eval-task",
+            "split": "train",
+            "instruction": "Return heldout.",
+        }
+        write_source_split(source, "train", [json.dumps(missing_eval, sort_keys=True)])
+        write_source_split(source, "heldout", [valid_task_line("heldout-task", "heldout")])
+        write_source_split(source, "regression", [valid_task_line("regression-task", "regression")])
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "missing-eval",
+                    "--profile",
+                    "missing-eval",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "Task missing-eval-task" in output.err
+        assert "needs instruction and eval" in output.err
+
+
+def test_malformed_benchmark_source_rejects_duplicate_task_ids(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "duplicate-ids" / "sources"
+        write_source_split(
+            source,
+            "train",
+            [
+                valid_task_line("duplicate-task", "train"),
+                valid_task_line("duplicate-task", "train"),
+            ],
+        )
+        write_source_split(source, "heldout", [valid_task_line("heldout-task", "heldout")])
+        write_source_split(source, "regression", [valid_task_line("regression-task", "regression")])
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "duplicate-ids",
+                    "--profile",
+                    "duplicate-ids",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "Duplicate task id duplicate-task in train split" in output.err
+
+
 def test_cli_main_smoke_for_benchmark_commands(tmp_path: Path, capsys) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init"]) == 0
@@ -171,3 +329,49 @@ def test_cli_main_smoke_for_benchmark_commands(tmp_path: Path, capsys) -> None:
 
 def latest_run_dir(path: Path) -> Path:
     return sorted((path / ".rsi" / "runs").iterdir())[-1]
+
+
+def write_source_split(source: Path, split: str, lines: list[str]) -> None:
+    split_dir = source / split
+    split_dir.mkdir(parents=True, exist_ok=True)
+    (split_dir / "tasks.jsonl").write_text("\n".join(lines) + "\n")
+
+
+def valid_task_line(task_id: str, split: str) -> str:
+    return json.dumps(
+        {
+            "id": task_id,
+            "split": split,
+            "environment": "knowledge_work",
+            "family": "smoke",
+            "instruction": "Return heldout.",
+            "eval": {"type": "contains", "expected": "heldout"},
+        },
+        sort_keys=True,
+    )
+
+
+def source_task(task_id: str, split: str, evaluator: dict[str, str]) -> dict[str, object]:
+    return {
+        "id": task_id,
+        "split": split,
+        "suite_version": "digest-suite.1",
+        "environment": "knowledge_work",
+        "family": "digest",
+        "instruction": "Return heldout.",
+        "eval": evaluator,
+        "evaluator_digest": evaluator_digest(evaluator),
+    }
+
+
+def source_task_reordered(task_id: str, split: str, evaluator: dict[str, str]) -> dict[str, object]:
+    return {
+        "evaluator_digest": evaluator_digest(evaluator),
+        "eval": evaluator,
+        "instruction": "Return heldout.",
+        "family": "digest",
+        "environment": "knowledge_work",
+        "suite_version": "digest-suite.1",
+        "split": split,
+        "id": task_id,
+    }
