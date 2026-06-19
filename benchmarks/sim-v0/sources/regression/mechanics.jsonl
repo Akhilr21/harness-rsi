@@ -1,0 +1,3 @@
+{"id":"mechanics_regression_exact_001","environment":"mechanics","family":"exact_eval","difficulty":1,"seed":9001,"instruction":"Return exactly 4.","eval":{"type":"exact","expected":"4"}}
+{"id":"mechanics_regression_regex_001","environment":"mechanics","family":"regex_eval","difficulty":1,"seed":9002,"instruction":"Return H27.","eval":{"type":"regex","expected":"^H\\d+$"}}
+{"id":"mechanics_regression_contains_001","environment":"mechanics","family":"contains_eval","difficulty":1,"seed":9003,"instruction":"Return a sentence containing trace capture.","eval":{"type":"contains","expected":"trace capture"}}

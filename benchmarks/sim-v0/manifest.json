@@ -1,0 +1,19 @@
+{
+  "id": "sim-v0",
+  "title": "Simulation Suite v0",
+  "description": "Small, reviewable synthetic environments for measuring harness-level improvement before external benchmark adapters.",
+  "baseline_harness": "H0",
+  "split_contract": {
+    "train": "Visible to diagnosis and proposal generation.",
+    "heldout": "Never used by proposal generation; validates Hn+1.",
+    "regression": "Protected behaviors that must not degrade."
+  },
+  "environments": [
+    "knowledge_work",
+    "coding_micro",
+    "data_ops",
+    "customer_support",
+    "world_model_static",
+    "mechanics"
+  ]
+}

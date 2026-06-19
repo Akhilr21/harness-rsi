@@ -1,0 +1,2 @@
+{"id":"support_heldout_tool_sequence_001","environment":"customer_support","family":"tool_sequence","difficulty":1,"seed":1401,"instruction":"A support agent must check order status before refunding. Return the kind of plan being tested.","eval":{"type":"contains","expected":"tool sequence"}}
+{"id":"support_heldout_policy_001","environment":"customer_support","family":"policy_following","difficulty":1,"seed":1402,"instruction":"A customer asks for an exception. Return the artifact that decides whether it is allowed.","eval":{"type":"contains","expected":"policy"}}

@@ -11,6 +11,10 @@ The model, task split, evaluator, and budget should stay fixed while the harness
 changes. A candidate harness earns promotion only through evidence, not because a
 prompt sounds better.
 
+The enhanced eval-suite roadmap lives in `docs/eval-suite-roadmap.md`. This file
+describes the current architecture; the roadmap doc tracks how `sim-v0` should
+grow from local source-controlled probes into broader suite-versioned evals.
+
 ## Harness Versions
 
 - `H0` is the baseline harness.
@@ -50,8 +54,14 @@ Initial environments:
 - `data_ops`: reason about schemas and data assets.
 - `tool_use`: validate tool access and observation loops.
 - `customer_support`: follow policy-like artifacts.
-- `world_model`: test state consistency in simulated environments.
+- `world_model_static`: test state consistency in simulated environments.
 - `mechanics`: protect basic regression behavior.
+
+`sim-v0` is the first named version of this level. Its source files live under
+`benchmarks/sim-v0`, then compile into `.rsi/benchmarks/sim-v0` for the existing
+runner. It keeps the local speed of synthetic environments while adding
+benchmark-source metadata, family labels, split counts, and gate-ready
+per-environment scores.
 
 ### Level C: External Benchmarks
 
@@ -67,6 +77,9 @@ External benchmarks should be adapters, not the first source of complexity.
 The first adapters should be read-only wrappers that convert external task
 metadata into the local task/run/gate schema.
 
+External adapters should not set new gate semantics. They should preserve the
+same local split, trace, compare, and promotion contract used by `sim-v0`.
+
 ## Splits
 
 Each benchmark environment has three splits:
@@ -76,6 +89,11 @@ Each benchmark environment has three splits:
 - `regression`: protected behavior that must not degrade.
 
 Promotion must never use heldout traces as proposal input.
+
+The split contract applies within each environment and failure family. For
+example, a `tool_use` regression should not be moved into `train` merely because
+it is useful proposal evidence; it should be copied or distilled into a train
+probe while the protected regression case remains protected.
 
 ## Promotion Gate
 
@@ -105,8 +123,25 @@ Current metric schema:
 - `metrics.duration_ms`: measured wall-clock runtime for local execution.
 - `metrics.cost_usd`: nullable placeholder until provider accounting is wired.
 
-Gates carry `metric_deltas` and `environment_scores`; these are evidence fields,
-not gating fields yet.
+Gates carry `metric_deltas` and `environment_scores`. Metric deltas are evidence
+fields for now. Environment scores can also become gating fields through
+`max_environment_drop` or a benchmark `gate_policy.json`.
+
+Current gate policy can enforce:
+
+- aggregate heldout improvement must meet the configured threshold
+- aggregate regression drop must stay within tolerance
+- each gate-enforced environment must meet its floor or max-drop policy
+- protected environments can veto promotion even when aggregate score improves
+
+Roadmap policy should add:
+
+- required failure-family coverage must be present or explicitly waived
+- efficiency thresholds can gate attempts, tool calls, duration, and cost once
+  those measurements are reliable enough
+
+This prevents an aggregate win from masking a local failure in a protected
+environment.
 
 ## Version-Aware Promotion
 

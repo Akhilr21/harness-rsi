@@ -18,6 +18,28 @@ Each meaningful change should record:
 - learning
 - remediation or next action
 
+## Eval-Suite Change Expectations
+
+Eval-suite changes are measurement changes. They should be reviewed with the same
+care as harness code because they can change whether a candidate is promoted.
+
+Every meaningful eval-suite change should record:
+
+- task sources added, removed, or changed
+- affected environments, failure families, and splits
+- evaluator changes and any digest changes
+- gate-policy changes and expected promotion impact
+- validation commands and artifact paths
+- migration or backfill plan for prior runs if old evidence is no longer
+  comparable
+
+Task data, evaluator definitions, suite version, and gate semantics should move
+together. Once a candidate run exists, do not edit the tasks or evaluator
+definitions used by that run in place. Create a new suite version instead.
+
+PRs that change gate semantics should say so explicitly. PRs that only add
+coverage should still explain the source and failure family of the new cases.
+
 ## CM-0001: Minimal CLI Skeleton
 
 - Date: 2026-06-15
@@ -186,3 +208,61 @@ Each meaningful change should record:
   training/evaluation material.
 - Remediation: next increment should add policy configuration that can gate on
   environment-specific regressions and eventually cost/latency thresholds.
+
+## CM-0008: Enhanced Eval-Suite Roadmap
+
+- Date: 2026-06-19
+- Files changed: `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: the next eval-suite increment needs a documented roadmap before
+  implementation so task sources, splits, gate policy, per-environment behavior,
+  failure-family coverage, testing levels, and review expectations are explicit.
+- Change made: documented the `sim-v0` roadmap, benchmark-source classes,
+  train/heldout/regression split contract, failure-family coverage matrix,
+  per-environment gate policy, eval-suite testing levels, and change-management
+  expectations.
+- Validation run: `git diff --check`.
+- Observation: this is a documentation-only change. It describes expected
+  roadmap behavior and keeps future policy enforcement separate from fields that
+  are currently recorded as evidence only.
+- Learning: eval-suite design is part of the harness, not background test data.
+  The roadmap needs versioning and review discipline before stronger gates are
+  implemented.
+- Remediation: implement `sim-v0` in increments: manifest and metadata first,
+  per-environment policy second, failure-family coverage reporting third, and
+  external adapters only after local policy tests are stable.
+
+## CM-0009: Sim-v0 Sources And Policy Gates
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/*`, `src/harness_rsi/benchmarks.py`,
+  `src/harness_rsi/cli.py`, `tests/test_harness.py`,
+  `tests/test_eval_suite_coverage.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: harness-level RSI needs a richer local simulation suite and
+  stronger gates before external benchmark adapters are credible.
+- Change made: added source-controlled `sim-v0` benchmark sources with train,
+  heldout, and regression splits across knowledge work, coding microtasks, data
+  operations, customer support, static world-model traces, and mechanics. Added
+  benchmark profile materialization into `.rsi/benchmarks/<name>`, copied
+  `gate_policy.json`, added per-environment gate enforcement, and fixed
+  regression-drop semantics so `max_allowed_drop` can actually allow a bounded
+  regression when configured.
+- Validation run: `pytest` reported 28 passing tests; `ruff check .` passed.
+  Manual smoke test materialized `sim-v0` in `/private/tmp`, ran H0 heldout and
+  regression splits, and wrote a heldout gate showing `effective_min_delta`,
+  `max_environment_drop`, `protected_environments`, `environment_scores`, and
+  no `environment_failures`.
+- Observation: the first implementation pass exposed that source benchmark
+  lookup must work outside the repo root. The source resolver now checks both
+  `./benchmarks/<profile>` and the editable package's repository root. It also
+  exposed a gate-policy readability issue, so gate artifacts now separate
+  requested thresholds from effective thresholds.
+- Learning: the suite should stay as data plus policy around the existing
+  runner. Creating separate training and evaluation runtimes would add
+  complexity without improving the measurement claim yet.
+- Remediation: next increment should add failure-family coverage reporting,
+  evaluator digest/version fields, and explicit policy tests for malformed
+  source profiles before adding Terminal-Bench, SWE-bench, or tau-style
+  adapters.

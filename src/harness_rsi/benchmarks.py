@@ -10,6 +10,10 @@ from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.io import read_json, write_json
 from harness_rsi.paths import BENCHMARKS, GATES, HARNESSES
 
+SOURCE_BENCHMARKS = Path("benchmarks")
+PACKAGE_BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
+REQUIRED_SPLITS = ("train", "heldout", "regression")
+
 
 @dataclass(frozen=True)
 class BenchmarkRun:
@@ -110,7 +114,12 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
 
 
-def init_benchmark(name: str = "synthetic") -> Path:
+def init_benchmark(name: str = "synthetic", profile: str | None = None) -> Path:
+    if profile is None and source_benchmark_path(name).exists():
+        profile = name
+    if profile and profile != "synthetic":
+        return init_source_benchmark(name=name, profile=profile)
+
     root = benchmark_dir(name)
     root.mkdir(parents=True, exist_ok=True)
     for split, rows in DEFAULT_SYNTHETIC_BENCHMARK.items():
@@ -134,6 +143,92 @@ def init_benchmark(name: str = "synthetic") -> Path:
     }
     write_json(root / "manifest.json", manifest)
     return root
+
+
+def init_source_benchmark(*, name: str, profile: str) -> Path:
+    source = source_benchmark_path(profile)
+    sources = source / "sources"
+    if not sources.exists():
+        raise RuntimeError(f"Benchmark source profile not found: {source}")
+
+    root = benchmark_dir(name)
+    root.mkdir(parents=True, exist_ok=True)
+    split_rows: dict[str, list[dict[str, Any]]] = {}
+    for split in REQUIRED_SPLITS:
+        split_rows[split] = read_source_split(sources / split, split)
+        write_jsonl(root / f"{split}.jsonl", split_rows[split])
+
+    h0 = harness_path("H0")
+    if not h0.exists():
+        write_json(h0, DEFAULT_HARNESS | {"id": "H0", "parent": None})
+
+    manifest = read_json(source / "manifest.json") if (source / "manifest.json").exists() else {}
+    manifest.update(
+        {
+            "name": name,
+            "profile": profile,
+            "source_path": str(source),
+            "splits": list(REQUIRED_SPLITS),
+            "split_counts": {split: len(rows) for split, rows in split_rows.items()},
+            "environments": sorted(
+                {
+                    task.get("environment", "default")
+                    for rows in split_rows.values()
+                    for task in rows
+                }
+            ),
+            "families": sorted(
+                {task["family"] for rows in split_rows.values() for task in rows if "family" in task}
+            ),
+            "baseline_harness": manifest.get("baseline_harness", "H0"),
+        }
+    )
+    write_json(root / "manifest.json", manifest)
+    if (source / "gate_policy.json").exists():
+        write_json(root / "gate_policy.json", read_json(source / "gate_policy.json"))
+    return root
+
+
+def source_benchmark_path(profile: str) -> Path:
+    local = SOURCE_BENCHMARKS / profile
+    if local.exists():
+        return local
+    return PACKAGE_BENCHMARKS / profile
+
+
+def read_source_split(split_dir: Path, split: str) -> list[dict[str, Any]]:
+    if not split_dir.exists():
+        raise RuntimeError(f"Benchmark source split not found: {split_dir}")
+    rows: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for path in sorted(split_dir.glob("*.jsonl")):
+        for row in read_jsonl_with_path(path):
+            task_id = row.get("id")
+            if not task_id:
+                raise RuntimeError(f"Task in {path} is missing id.")
+            if task_id in seen_ids:
+                raise RuntimeError(f"Duplicate task id {task_id} in {split} split.")
+            if "instruction" not in row or "eval" not in row:
+                raise RuntimeError(f"Task {task_id} in {path} needs instruction and eval.")
+            row.setdefault("environment", "default")
+            row.setdefault("split", split)
+            seen_ids.add(task_id)
+            rows.append(row)
+    if not rows:
+        raise RuntimeError(f"Benchmark source split has no tasks: {split_dir}")
+    return rows
+
+
+def read_jsonl_with_path(path: Path) -> list[dict[str, Any]]:
+    rows = []
+    for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            raise RuntimeError(f"Invalid JSONL at {path}:{line_number}: {error}") from error
+    return rows
 
 
 def run_benchmark(
@@ -249,25 +344,112 @@ def gate_candidate(
     candidate_run: Path,
     min_pass_rate_delta: float,
     max_allowed_drop: float,
+    max_environment_drop: float | None = None,
 ) -> Path:
     comparison = compare_runs(baseline_run, candidate_run)
+    policy = load_gate_policy(comparison["benchmark"], comparison["split"])
+    thresholds = resolve_gate_thresholds(
+        split=comparison["split"],
+        policy=policy,
+        min_pass_rate_delta=min_pass_rate_delta,
+        max_allowed_drop=max_allowed_drop,
+        max_environment_drop=max_environment_drop,
+    )
     delta = comparison["pass_rate_delta"]
-    passed = delta >= min_pass_rate_delta and delta >= -max_allowed_drop
+    environment_failures = find_environment_failures(
+        comparison["environment_scores"],
+        thresholds["max_environment_drop"],
+        thresholds["protected_environments"],
+    )
+    passed = delta >= thresholds["min_delta"] and not environment_failures
     decision = {
         **comparison,
-        "min_pass_rate_delta": min_pass_rate_delta,
-        "max_allowed_drop": max_allowed_drop,
+        "requested_min_pass_rate_delta": min_pass_rate_delta,
+        "requested_max_allowed_drop": max_allowed_drop,
+        "min_pass_rate_delta": thresholds["min_pass_rate_delta"],
+        "max_allowed_drop": thresholds["max_allowed_drop"],
+        "max_environment_drop": thresholds["max_environment_drop"],
+        "effective_min_delta": thresholds["min_delta"],
+        "protected_environments": thresholds["protected_environments"],
+        "environment_failures": environment_failures,
         "decision": "promote" if passed else "reject",
         "rationale": (
             "Candidate met pass-rate gate."
             if passed
-            else "Candidate failed pass-rate gate or exceeded allowed drop."
+            else "Candidate failed pass-rate, regression, or environment gate."
         ),
     }
     decided_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path = GATES / f"{candidate_run.name}-{decided_at}-gate.json"
     write_json(path, decision)
     return path
+
+
+def load_gate_policy(benchmark: str, split: str) -> dict[str, Any]:
+    path = benchmark_dir(benchmark) / "gate_policy.json"
+    if not path.exists():
+        return {}
+    policy = read_json(path)
+    split_policy = policy.get(split, {})
+    if not isinstance(split_policy, dict):
+        raise RuntimeError(f"Gate policy for split {split} must be an object.")
+    return split_policy
+
+
+def resolve_gate_thresholds(
+    *,
+    split: str,
+    policy: dict[str, Any],
+    min_pass_rate_delta: float,
+    max_allowed_drop: float,
+    max_environment_drop: float | None,
+) -> dict[str, Any]:
+    policy_min = float(policy.get("min_pass_rate_delta", min_pass_rate_delta))
+    policy_drop = float(policy.get("max_allowed_drop", max_allowed_drop))
+    policy_environment_drop = policy.get("max_environment_drop", max_environment_drop)
+    if policy_environment_drop is not None:
+        policy_environment_drop = float(policy_environment_drop)
+
+    min_delta = policy_min if policy_min > 0 else -policy_drop
+    if split == "regression" and policy_min == 0:
+        min_delta = -policy_drop
+
+    protected = policy.get("protected_environments", [])
+    if protected == "all":
+        protected_environments: list[str] | str = "all"
+    else:
+        protected_environments = [str(item) for item in protected]
+    return {
+        "min_delta": min_delta,
+        "min_pass_rate_delta": policy_min,
+        "max_allowed_drop": policy_drop,
+        "max_environment_drop": policy_environment_drop,
+        "protected_environments": protected_environments,
+    }
+
+
+def find_environment_failures(
+    environment_scores: dict[str, dict[str, Any]],
+    max_environment_drop: float | None,
+    protected_environments: list[str] | str,
+) -> list[dict[str, Any]]:
+    if max_environment_drop is None:
+        return []
+    failures = []
+    protected = set(environment_scores) if protected_environments == "all" else set(protected_environments)
+    for environment, score in environment_scores.items():
+        if protected and environment not in protected:
+            continue
+        delta = score.get("pass_rate_delta", 0)
+        if delta < -max_environment_drop:
+            failures.append(
+                {
+                    "environment": environment,
+                    "pass_rate_delta": delta,
+                    "max_environment_drop": max_environment_drop,
+                }
+            )
+    return failures
 
 
 def none_safe_delta(candidate: float | int | None, baseline: float | int | None) -> float | int | None:

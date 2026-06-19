@@ -1,0 +1,2 @@
+{"id":"code_train_error_signal_001","environment":"coding_micro","family":"failure_signal","difficulty":1,"seed":201,"instruction":"A test log says ValueError: invalid literal for int(). Return the error type.","eval":{"type":"exact","expected":"ValueError"}}
+{"id":"code_train_patch_target_001","environment":"coding_micro","family":"patch_targeting","difficulty":1,"seed":202,"instruction":"A Python package fails because src/app/parser.py mishandles empty lines. Return only the patch target path.","eval":{"type":"exact","expected":"src/app/parser.py"}}

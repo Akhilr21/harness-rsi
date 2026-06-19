@@ -1,0 +1,2 @@
+{"id":"data_train_join_key_001","environment":"data_ops","family":"schema_reasoning","difficulty":1,"seed":301,"instruction":"Orders have customer_id and customers have id. Return the likely join key from orders.","eval":{"type":"exact","expected":"customer_id"}}
+{"id":"data_train_asset_type_001","environment":"data_ops","family":"asset_classification","difficulty":1,"seed":302,"instruction":"A file stores comma-separated rows with a header. Return the common three-letter format name.","eval":{"type":"exact","expected":"csv"}}

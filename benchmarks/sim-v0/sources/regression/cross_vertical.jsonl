@@ -1,0 +1,2 @@
+{"id":"cross_regression_support_policy_001","environment":"customer_support","family":"cross_vertical","difficulty":1,"seed":9201,"instruction":"Return the word for a rule document used to approve or deny a refund.","eval":{"type":"exact","expected":"policy"}}
+{"id":"cross_regression_world_state_001","environment":"world_model_static","family":"cross_vertical","difficulty":1,"seed":9202,"instruction":"Return the two-word phrase for preserving coherent simulated state over time.","eval":{"type":"exact","expected":"state consistency"}}

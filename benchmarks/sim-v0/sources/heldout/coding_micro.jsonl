@@ -1,0 +1,2 @@
+{"id":"code_heldout_regression_001","environment":"coding_micro","family":"regression_awareness","difficulty":1,"seed":1201,"instruction":"A candidate patch fixes one failing test but may break old behavior. Return the protected test category.","eval":{"type":"contains","expected":"regression"}}
+{"id":"code_heldout_extension_001","environment":"coding_micro","family":"patch_targeting","difficulty":1,"seed":1202,"instruction":"Return the standard extension for a Python source file.","eval":{"type":"exact","expected":".py"}}

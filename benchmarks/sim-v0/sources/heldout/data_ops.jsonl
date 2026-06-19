@@ -1,0 +1,2 @@
+{"id":"data_heldout_schema_001","environment":"data_ops","family":"schema_reasoning","difficulty":1,"seed":1301,"instruction":"A column is present in train.csv but missing from eval.csv. Return the issue type.","eval":{"type":"contains","expected":"schema mismatch"}}
+{"id":"data_heldout_metric_001","environment":"data_ops","family":"metric_selection","difficulty":1,"seed":1302,"instruction":"For a pass/fail benchmark, return the primary aggregate metric name.","eval":{"type":"contains","expected":"pass rate"}}

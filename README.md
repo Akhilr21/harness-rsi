@@ -87,6 +87,19 @@ harness-rsi benchmark gate \
 The benchmark layer enforces fixed-model comparison, matching task order, and
 matching task/evaluator definitions.
 
+The richer local simulation suite is source-controlled under `benchmarks/sim-v0`
+and materializes into `.rsi/benchmarks/sim-v0`:
+
+```bash
+harness-rsi benchmark init --name sim-v0
+harness-rsi benchmark run --benchmark sim-v0 --split heldout --harness H0 --mock
+```
+
+`sim-v0` currently covers knowledge work, coding microtasks, data operations,
+customer support, static world-model traces, and regression mechanics. Its gate
+policy can reject a candidate when an aggregate score is flat or improved but a
+protected environment regresses.
+
 Promote the existing candidate only after a promote gate:
 
 ```bash
@@ -123,6 +136,30 @@ counts, duration, and nullable cost placeholders. Rejected cycles write a
 decision artifact under `.rsi/decisions/` with proposal, gate, score-delta, and
 metric-delta evidence.
 
+## Enhanced Eval Suite
+
+`sim-v0` is the first named eval-suite layer above the starter synthetic
+benchmark. It is local, deterministic, and cheap enough to run during harness
+iterations.
+
+The committed suite starts with hand-authored probes and regression seeds. The
+roadmap is to add sanitized real traces and public benchmark miniatures next.
+Each task records its environment, family, split, and deterministic evaluator.
+
+The split contract stays strict:
+
+- `train` is visible to proposal generation.
+- `heldout` validates the candidate and must not leak into proposals.
+- `regression` protects behavior that previous candidates or reviews already
+  taught us to care about.
+
+Gates now support aggregate pass-rate thresholds, regression-drop tolerance, and
+per-environment maximum drops. The roadmap is to add failure-family coverage and
+eventually efficiency thresholds for attempts, tool calls, duration, and cost.
+
+See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
+expectations.
+
 ## Real model runs
 
 Set an API key and omit `--mock`:
@@ -138,7 +175,9 @@ overrideable so experiments can pin a model explicitly.
 
 ## Artifact layout
 
-`harness-rsi init` creates:
+`harness-rsi init` creates the starter harness, sample task file, and memory
+directory. `harness-rsi benchmark init` adds versioned benchmark artifacts such
+as `H0` and benchmark splits:
 
 ```text
 .rsi/
@@ -185,4 +224,5 @@ observation back to the model on the next attempt.
 ## Design docs
 
 - `docs/evaluation-architecture.md`
+- `docs/eval-suite-roadmap.md`
 - `docs/change-management.md`

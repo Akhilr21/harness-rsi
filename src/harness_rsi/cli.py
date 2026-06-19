@@ -75,7 +75,7 @@ def reject_cmd(args: argparse.Namespace) -> int:
 
 
 def benchmark_init(args: argparse.Namespace) -> int:
-    path = init_benchmark(args.name)
+    path = init_benchmark(args.name, profile=args.profile)
     print(f"Initialized benchmark at {path}")
     return 0
 
@@ -107,6 +107,7 @@ def benchmark_gate(args: argparse.Namespace) -> int:
         candidate_run=Path(args.candidate_run),
         min_pass_rate_delta=args.min_pass_rate_delta,
         max_allowed_drop=args.max_allowed_drop,
+        max_environment_drop=args.max_environment_drop,
     )
     print(f"Wrote gate decision to {path}")
     print(readable_json(read_json(path)))
@@ -194,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     benchmark_init_parser = benchmark_sub.add_parser("init", help="Create synthetic benchmark splits.")
     benchmark_init_parser.add_argument("--name", default="synthetic")
+    benchmark_init_parser.add_argument(
+        "--profile",
+        help="Compile benchmark sources from benchmarks/<profile> into .rsi/benchmarks/<name>.",
+    )
     benchmark_init_parser.set_defaults(func=benchmark_init)
 
     benchmark_run_parser = benchmark_sub.add_parser("run", help="Run one benchmark split.")
@@ -214,6 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_gate_parser.add_argument("--candidate-run", required=True)
     benchmark_gate_parser.add_argument("--min-pass-rate-delta", type=float, default=0.0)
     benchmark_gate_parser.add_argument("--max-allowed-drop", type=float, default=0.0)
+    benchmark_gate_parser.add_argument("--max-environment-drop", type=float)
     benchmark_gate_parser.set_defaults(func=benchmark_gate)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")

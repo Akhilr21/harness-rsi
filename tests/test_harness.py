@@ -51,6 +51,22 @@ def test_benchmark_init_creates_h0_and_splits(tmp_path: Path) -> None:
         assert "world_model" in manifest["environments"]
 
 
+def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        root = tmp_path / ".rsi" / "benchmarks" / "sim-v0"
+        manifest = read_json(root / "manifest.json")
+        assert manifest["profile"] == "sim-v0"
+        assert manifest["split_counts"] == {"heldout": 10, "regression": 7, "train": 10}
+        assert "world_model_static" in manifest["environments"]
+        assert "impossible_transition" in manifest["families"]
+        assert (root / "gate_policy.json").exists()
+        heldout = (root / "heldout.jsonl").read_text()
+        assert "kw_heldout_decision_001" in heldout
+        assert '"split": "heldout"' in heldout
+        assert (tmp_path / ".rsi" / "harnesses" / "H0.json").exists()
+
+
 def test_benchmark_run_records_metadata(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init"]) == 0
@@ -106,6 +122,52 @@ def test_compare_and_gate_pass_for_equal_mock_runs(tmp_path: Path) -> None:
         assert gate["decision"] == "promote"
         assert "metric_deltas" in gate
         assert "environment_scores" in gate
+
+
+def test_gate_allows_configured_regression_drop(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=10, task_count=10)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=9, task_count=10)
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0.1,
+        )
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["effective_min_delta"] == -0.1
+
+
+def test_gate_rejects_environment_drop_with_flat_aggregate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        baseline_run = write_fake_environment_run(
+            tmp_path / "baseline",
+            first_environment_passed=True,
+            second_environment_passed=False,
+        )
+        candidate_run = write_fake_environment_run(
+            tmp_path / "candidate",
+            first_environment_passed=False,
+            second_environment_passed=True,
+        )
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+            max_environment_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["pass_rate_delta"] == 0
+        assert gate["decision"] == "reject"
+        assert gate["environment_failures"] == [
+            {
+                "environment": "knowledge_work",
+                "max_environment_drop": 0,
+                "pass_rate_delta": -1.0,
+            }
+        ]
 
 
 def test_gate_rejects_when_threshold_not_met(tmp_path: Path) -> None:
@@ -423,6 +485,8 @@ def test_experiment_cycle_promotes_candidate_with_composite_gate(tmp_path: Path)
         assert config["lineage"]["heldout_candidate_run"]
         assert config["lineage"]["regression_candidate_run"]
         assert config["lineage"]["split"] == "heldout+regression"
+        proposal = read_json(Path(next(step["proposal"] for step in cycle["steps"] if step["name"] == "propose_patch")))
+        assert proposal["evidence"]["metadata"]["split"] == "train"
 
 
 def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
@@ -484,6 +548,63 @@ def write_fake_run(
             "passed": passed,
             "pass_rate": passed / task_count,
             "results": results,
+        },
+    )
+    return path
+
+
+def write_fake_environment_run(
+    path: Path,
+    *,
+    first_environment_passed: bool,
+    second_environment_passed: bool,
+) -> Path:
+    path.mkdir(parents=True)
+    write_json(path / "harness.snapshot.json", {"model": "gpt-5.5"})
+    rows = [
+        {
+            "task_id": "kw-task",
+            "environment": "knowledge_work",
+            "passed": first_environment_passed,
+            "attempt": 0,
+        },
+        {
+            "task_id": "code-task",
+            "environment": "coding_micro",
+            "passed": second_environment_passed,
+            "attempt": 0,
+        },
+    ]
+    passed = sum(1 for row in rows if row["passed"])
+    per_environment = {}
+    for row in rows:
+        per_environment[row["environment"]] = {
+            "tasks": 1,
+            "passed": int(row["passed"]),
+            "pass_rate": 1.0 if row["passed"] else 0.0,
+            "attempts": 1,
+            "tool_calls": 0,
+        }
+    write_json(
+        path / "results.json",
+        {
+            "run_id": path.name,
+            "metadata": {"benchmark": "fake", "split": "heldout", "harness": path.name},
+            "task_digest": "same-tasks",
+            "harness_behavior_digest": f"{path.name}-digest",
+            "tasks": len(rows),
+            "passed": passed,
+            "pass_rate": passed / len(rows),
+            "attempts": len(rows),
+            "tool_calls": 0,
+            "metrics": {
+                "attempts": len(rows),
+                "tool_calls": 0,
+                "duration_ms": 1,
+                "cost_usd": None,
+            },
+            "per_environment": per_environment,
+            "results": rows,
         },
     )
     return path
