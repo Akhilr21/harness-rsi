@@ -96,6 +96,18 @@ The first implemented metric is pass rate. Later metrics should include cost,
 latency, retries, tool errors, failure-family coverage, and per-environment
 performance.
 
+Current metric schema:
+
+- `pass_rate`: primary score for gates.
+- `per_environment`: pass rate, attempts, and tool calls by environment.
+- `metrics.attempts`: total model attempts in a run.
+- `metrics.tool_calls`: total accepted tool-call observations.
+- `metrics.duration_ms`: measured wall-clock runtime for local execution.
+- `metrics.cost_usd`: nullable placeholder until provider accounting is wired.
+
+Gates carry `metric_deltas` and `environment_scores`; these are evidence fields,
+not gating fields yet.
+
 ## Version-Aware Promotion
 
 Benchmark promotion uses two phases. First a proposal creates a candidate
@@ -154,6 +166,9 @@ gate. Promotion consumes a composite decision that requires both heldout and
 regression to pass.
 
 Cycle summaries live under `.rsi/cycles/` so every artifact path is reviewable.
+Rejected cycles also write first-class decision artifacts under
+`.rsi/decisions/` with proposal, heldout gate, regression gate, composite gate,
+score deltas, and metric deltas.
 
 ## Frontier Model Interaction
 

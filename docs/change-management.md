@@ -160,3 +160,29 @@ Each meaningful change should record:
 - Remediation: next increment should add richer cycle policies, especially
   per-environment deltas, explicit cost/latency placeholders, and rejection
   artifacts for non-promoted candidates.
+
+## CM-0007: Metrics And Rejection Decision Artifacts
+
+- Date: 2026-06-18
+- Files changed: `src/harness_rsi/harness.py`, `src/harness_rsi/benchmarks.py`,
+  `src/harness_rsi/cycle.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/change-management.md`
+- Hypothesis: pass rate alone is too coarse to study harness-level RSI. The
+  system needs environment-specific performance and basic efficiency signals,
+  even before real cost accounting exists.
+- Change made: run summaries now include `metrics`, `per_environment`, duration,
+  attempt counts, tool-call counts, and nullable cost placeholders. Comparisons
+  and gates now include `metric_deltas` and `environment_scores`. Rejected
+  cycles write first-class decision artifacts under `.rsi/decisions/`.
+- Validation run: `pytest` reported 21 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke test ran a no-promote cycle for `H6` and
+  inspected the rejected decision artifact plus heldout gate metrics.
+- Observation: duration deltas are noisy at this scale, but the field is still
+  useful as a placeholder for heavier benchmarks. Per-environment scores make
+  the world-model probe visible instead of burying it inside aggregate pass
+  rate.
+- Learning: rejected candidates are as valuable as promoted ones for harness RSI.
+  They need explicit artifacts so failed improvement hypotheses become future
+  training/evaluation material.
+- Remediation: next increment should add policy configuration that can gate on
+  environment-specific regressions and eventually cost/latency thresholds.

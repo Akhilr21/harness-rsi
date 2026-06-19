@@ -7,7 +7,7 @@ from typing import Any
 from harness_rsi.benchmarks import gate_candidate, harness_path, run_benchmark
 from harness_rsi.improve import propose_patch
 from harness_rsi.io import read_json, write_json
-from harness_rsi.paths import CYCLES
+from harness_rsi.paths import CYCLES, DECISIONS
 from harness_rsi.versions import create_candidate_version, promote_candidate_version
 
 
@@ -149,6 +149,8 @@ def run_experiment_cycle(
             if not promote
             else "heldout or regression gate rejected candidate"
         )
+        rejection = write_cycle_rejection(summary=summary, composite_gate=composite_gate)
+        summary["decision_artifact"] = str(rejection)
 
     path = CYCLES / f"{cycle_id}.json"
     write_json(path, summary)
@@ -197,3 +199,40 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
         },
     )
     return path
+
+
+def write_cycle_rejection(*, summary: dict[str, Any], composite_gate: Path) -> Path:
+    path = DECISIONS / f"{summary['id']}-rejected.json"
+    composite = read_json(composite_gate)
+    write_json(
+        path,
+        {
+            "id": summary["id"],
+            "decision": "reject",
+            "parent": summary["parent"],
+            "candidate": summary["candidate"],
+            "benchmark": summary["benchmark"],
+            "rejection_reason": summary.get("rejection_reason"),
+            "proposal": find_step_value(summary, "propose_patch", "proposal"),
+            "heldout_gate": composite.get("heldout_gate"),
+            "regression_gate": composite.get("regression_gate"),
+            "composite_gate": str(composite_gate),
+            "score_deltas": {
+                "heldout_pass_rate_delta": composite.get("heldout_pass_rate_delta"),
+                "regression_pass_rate_delta": composite.get("regression_pass_rate_delta"),
+            },
+            "metric_deltas": {
+                "heldout": read_json(Path(composite["heldout_gate"])).get("metric_deltas", {}),
+                "regression": read_json(Path(composite["regression_gate"])).get("metric_deltas", {}),
+            },
+            "steps": summary["steps"],
+        },
+    )
+    return path
+
+
+def find_step_value(summary: dict[str, Any], step_name: str, key: str) -> Any:
+    for step in summary.get("steps", []):
+        if step.get("name") == step_name:
+            return step.get(key)
+    return None

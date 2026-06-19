@@ -212,6 +212,33 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
         "baseline_passed": baseline["passed"],
         "candidate_passed": candidate["passed"],
         "task_count": candidate["tasks"],
+        "baseline_attempts": baseline.get("attempts"),
+        "candidate_attempts": candidate.get("attempts"),
+        "attempt_delta": none_safe_delta(candidate.get("attempts"), baseline.get("attempts")),
+        "baseline_tool_calls": baseline.get("tool_calls"),
+        "candidate_tool_calls": candidate.get("tool_calls"),
+        "tool_call_delta": none_safe_delta(candidate.get("tool_calls"), baseline.get("tool_calls")),
+        "baseline_duration_ms": baseline.get("duration_ms"),
+        "candidate_duration_ms": candidate.get("duration_ms"),
+        "duration_ms_delta": none_safe_delta(
+            candidate.get("duration_ms"), baseline.get("duration_ms")
+        ),
+        "baseline_usage": baseline.get("usage", {}),
+        "candidate_usage": candidate.get("usage", {}),
+        "baseline_metrics": baseline.get("metrics", {}),
+        "candidate_metrics": candidate.get("metrics", {}),
+        "metric_deltas": compare_metric_deltas(
+            baseline.get("metrics", {}),
+            candidate.get("metrics", {}),
+        ),
+        "environment_scores": compare_environment_metrics(
+            baseline.get("per_environment", {}),
+            candidate.get("per_environment", {}),
+        ),
+        "per_environment": compare_environment_metrics(
+            baseline.get("per_environment", {}),
+            candidate.get("per_environment", {}),
+        ),
         "per_task": per_task,
     }
 
@@ -241,3 +268,49 @@ def gate_candidate(
     path = GATES / f"{candidate_run.name}-{decided_at}-gate.json"
     write_json(path, decision)
     return path
+
+
+def none_safe_delta(candidate: float | int | None, baseline: float | int | None) -> float | int | None:
+    if candidate is None or baseline is None:
+        return None
+    return candidate - baseline
+
+
+def compare_environment_metrics(
+    baseline: dict[str, dict[str, Any]], candidate: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    comparison = {}
+    for environment in sorted(set(baseline) | set(candidate)):
+        baseline_entry = baseline.get(environment, {})
+        candidate_entry = candidate.get(environment, {})
+        comparison[environment] = {
+            "baseline_tasks": baseline_entry.get("tasks", 0),
+            "candidate_tasks": candidate_entry.get("tasks", 0),
+            "baseline_passed": baseline_entry.get("passed", 0),
+            "candidate_passed": candidate_entry.get("passed", 0),
+            "task_count": candidate_entry.get("tasks", baseline_entry.get("tasks", 0)),
+            "baseline_pass_rate": baseline_entry.get("pass_rate", 0),
+            "candidate_pass_rate": candidate_entry.get("pass_rate", 0),
+            "pass_rate_delta": candidate_entry.get("pass_rate", 0)
+            - baseline_entry.get("pass_rate", 0),
+            "baseline_attempts": baseline_entry.get("attempts", 0),
+            "candidate_attempts": candidate_entry.get("attempts", 0),
+            "attempt_delta": candidate_entry.get("attempts", 0)
+            - baseline_entry.get("attempts", 0),
+            "baseline_tool_calls": baseline_entry.get("tool_calls", 0),
+            "candidate_tool_calls": candidate_entry.get("tool_calls", 0),
+            "tool_call_delta": candidate_entry.get("tool_calls", 0)
+            - baseline_entry.get("tool_calls", 0),
+        }
+    return comparison
+
+
+def compare_metric_deltas(
+    baseline: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, float | int | None]:
+    return {
+        "attempts": none_safe_delta(candidate.get("attempts"), baseline.get("attempts")),
+        "tool_calls": none_safe_delta(candidate.get("tool_calls"), baseline.get("tool_calls")),
+        "duration_ms": none_safe_delta(candidate.get("duration_ms"), baseline.get("duration_ms")),
+        "cost_usd": none_safe_delta(candidate.get("cost_usd"), baseline.get("cost_usd")),
+    }

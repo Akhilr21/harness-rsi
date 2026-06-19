@@ -118,6 +118,11 @@ runs parent/candidate heldout and regression splits, writes separate gates,
 writes a composite gate, and promotes the candidate only when both heldout and
 regression gates pass.
 
+Runs and gates also record per-environment scores, attempt counts, tool-call
+counts, duration, and nullable cost placeholders. Rejected cycles write a
+decision artifact under `.rsi/decisions/` with proposal, gate, score-delta, and
+metric-delta evidence.
+
 ## Real model runs
 
 Set an API key and omit `--mock`:

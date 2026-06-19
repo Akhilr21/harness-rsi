@@ -63,10 +63,15 @@ def test_benchmark_run_records_metadata(tmp_path: Path) -> None:
             "harness": "H0",
         }
         assert results["task_digest"]
+        assert results["metrics"]["attempts"] == len(results["results"])
+        assert results["metrics"]["tool_calls"] == 0
+        assert results["metrics"]["cost_usd"] is None
+        assert results["duration_ms"] >= 0
         assert {item["environment"] for item in results["results"]} >= {
             "knowledge_work",
             "world_model",
         }
+        assert_environment_rollup_reconciles(results)
 
 
 def test_compare_and_gate_pass_for_equal_mock_runs(tmp_path: Path) -> None:
@@ -87,6 +92,9 @@ def test_compare_and_gate_pass_for_equal_mock_runs(tmp_path: Path) -> None:
         assert comparison["candidate_harness"] == "H1"
         assert comparison["candidate_harness_digest"]
         assert comparison["pass_rate_delta"] == 0
+        assert comparison["metric_deltas"]["attempts"] == 0
+        assert comparison["metric_deltas"]["tool_calls"] == 0
+        assert comparison["environment_scores"]["knowledge_work"]["task_count"] == 1
 
         gate_path = gate_candidate(
             baseline_run=baseline_run,
@@ -94,7 +102,10 @@ def test_compare_and_gate_pass_for_equal_mock_runs(tmp_path: Path) -> None:
             min_pass_rate_delta=0,
             max_allowed_drop=0,
         )
-        assert read_json(gate_path)["decision"] == "promote"
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert "metric_deltas" in gate
+        assert "environment_scores" in gate
 
 
 def test_gate_rejects_when_threshold_not_met(tmp_path: Path) -> None:
@@ -431,6 +442,13 @@ def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
         cycle = read_json(cycle_path)
         assert cycle["status"] == "rejected"
         assert cycle["rejection_reason"] == "promotion disabled"
+        decision = read_json(Path(cycle["decision_artifact"]))
+        assert decision["decision"] == "reject"
+        assert decision["proposal"]
+        assert decision["heldout_gate"]
+        assert decision["regression_gate"]
+        assert "heldout_pass_rate_delta" in decision["score_deltas"]
+        assert "heldout" in decision["metric_deltas"]
         config = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
         assert config["status"] == "candidate"
 
@@ -469,6 +487,15 @@ def write_fake_run(
         },
     )
     return path
+
+
+def assert_environment_rollup_reconciles(results: dict[str, object]) -> None:
+    per_environment = results["per_environment"]
+    assert isinstance(per_environment, dict)
+    assert sum(item["tasks"] for item in per_environment.values()) == results["tasks"]
+    assert sum(item["passed"] for item in per_environment.values()) == results["passed"]
+    assert sum(item["attempts"] for item in per_environment.values()) == results["attempts"]
+    assert sum(item["tool_calls"] for item in per_environment.values()) == results["tool_calls"]
 
 
 def write_proposal(path: Path) -> Path:
