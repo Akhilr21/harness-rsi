@@ -139,6 +139,24 @@ opt-in because duration is noisy locally and provider cost is not collected yet.
 Rejected cycles write a decision artifact under `.rsi/decisions/` with proposal,
 gate, score-delta, and metric-delta evidence.
 
+Repeated local stability runs chain the same cycle before external adapters are
+added:
+
+```bash
+harness-rsi experiment stability \
+  --parent H0 \
+  --candidate-prefix H \
+  --cycles 3 \
+  --benchmark sim-v0 \
+  --mock
+```
+
+This writes `.rsi/cycles/stability-*.json` with every child cycle, component
+gate, composite gate, split-isolation audit, waiver-review summary, efficiency
+summary, rollup, and stability digest. With promotion enabled, the parent
+advances only after a candidate promotes, so a clean three-cycle run proves an
+`H0 -> H1 -> H2 -> H3` chain under the current local gate contract.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic

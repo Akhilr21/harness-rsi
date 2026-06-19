@@ -190,6 +190,322 @@ def run_experiment_cycle(
     return path
 
 
+def run_experiment_stability(
+    *,
+    parent: str,
+    candidate_prefix: str,
+    cycles: int,
+    benchmark: str,
+    model: str | None,
+    reasoning_effort: str,
+    mock: bool,
+    min_heldout_delta: float,
+    max_regression_drop: float,
+    promote: bool,
+    first_candidate_index: int | None = None,
+) -> Path:
+    if cycles < 1:
+        raise RuntimeError("cycles must be greater than or equal to 1.")
+    if not candidate_prefix:
+        raise RuntimeError("candidate_prefix must be non-empty.")
+    next_index = (
+        first_candidate_index
+        if first_candidate_index is not None
+        else candidate_index_after_parent(parent, candidate_prefix)
+    )
+    if next_index < 0:
+        raise RuntimeError("first_candidate_index must be greater than or equal to 0.")
+
+    stability_id = datetime.now(timezone.utc).strftime("stability-%Y%m%dT%H%M%S%fZ")
+    current_parent = parent
+    cycle_summaries = []
+    for ordinal in range(1, cycles + 1):
+        candidate = f"{candidate_prefix}{next_index}"
+        cycle_path = run_experiment_cycle(
+            parent=current_parent,
+            candidate=candidate,
+            benchmark=benchmark,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            mock=mock,
+            min_heldout_delta=min_heldout_delta,
+            max_regression_drop=max_regression_drop,
+            promote=promote,
+        )
+        cycle_summary = summarize_cycle_for_stability(
+            cycle_path=cycle_path,
+            ordinal=ordinal,
+            parent=current_parent,
+            candidate=candidate,
+        )
+        cycle_summaries.append(cycle_summary)
+        if cycle_summary["cycle_status"] == "promoted":
+            current_parent = candidate
+        next_index += 1
+
+    totals = summarize_stability_totals(cycle_summaries)
+    rollup = summarize_stability_rollup(cycle_summaries, totals)
+    failures = find_stability_failures(cycle_summaries, rollup)
+    validation_status = "pass" if len(cycle_summaries) == cycles and not failures else "fail"
+    if promote:
+        promotion_status = "pass" if totals["promoted"] == cycles else "partial"
+    else:
+        promotion_status = "not_requested"
+    report = {
+        "id": stability_id,
+        "kind": "local_cycle_stability",
+        "parent_start": parent,
+        "final_parent": current_parent,
+        "candidate_prefix": candidate_prefix,
+        "first_candidate_index": (
+            first_candidate_index
+            if first_candidate_index is not None
+            else candidate_index_after_parent(parent, candidate_prefix)
+        ),
+        "requested_cycles": cycles,
+        "completed_cycles": len(cycle_summaries),
+        "benchmark": benchmark,
+        "mock": mock,
+        "promote": promote,
+        "min_heldout_delta": min_heldout_delta,
+        "max_regression_drop": max_regression_drop,
+        "validation_status": validation_status,
+        "promotion_status": promotion_status,
+        "status": (
+            "pass"
+            if validation_status == "pass"
+            and (promotion_status in {"pass", "not_requested"})
+            else "review"
+        ),
+        "gate_contract": summarize_stability_gate_contract(cycle_summaries),
+        "rollup": rollup,
+        "failures": failures,
+        "totals": totals,
+        "cycles": cycle_summaries,
+    }
+    report["stability_digest"] = digest_payload(report)
+    path = CYCLES / f"{stability_id}.json"
+    write_json(path, report)
+    return path
+
+
+def candidate_index_after_parent(parent: str, candidate_prefix: str) -> int:
+    if parent.startswith(candidate_prefix):
+        suffix = parent[len(candidate_prefix) :]
+        if suffix.isdigit():
+            return int(suffix) + 1
+    return 1
+
+
+def summarize_cycle_for_stability(
+    *,
+    cycle_path: Path,
+    ordinal: int,
+    parent: str,
+    candidate: str,
+) -> dict[str, Any]:
+    cycle = read_json(cycle_path)
+    heldout_step = find_step(cycle, "heldout_gate")
+    regression_step = find_step(cycle, "regression_gate")
+    composite_step = find_step(cycle, "composite_gate")
+    split_step = find_step(cycle, "split_isolation_audit")
+    heldout_gate = read_json(Path(heldout_step["gate"]))
+    regression_gate = read_json(Path(regression_step["gate"]))
+    split_audit = read_json(Path(split_step["audit"]))
+    heldout = summarize_gate_for_stability(
+        gate=heldout_gate,
+        gate_path=Path(heldout_step["gate"]),
+    )
+    regression = summarize_gate_for_stability(
+        gate=regression_gate,
+        gate_path=Path(regression_step["gate"]),
+    )
+    split_isolation = {
+        "audit": split_step["audit"],
+        "status": split_audit.get("status"),
+        "violations": len(split_audit.get("violations", [])),
+        "split_isolation_digest": split_audit.get("split_isolation_digest"),
+    }
+    validation_passed = (
+        heldout_gate.get("decision") == "promote"
+        and regression_gate.get("decision") == "promote"
+        and split_audit.get("status") == "pass"
+    )
+    failure_counts = {
+        "environment": heldout["environment_failures"] + regression["environment_failures"],
+        "coverage": heldout["coverage_failures"] + regression["coverage_failures"],
+        "waiver_review": (
+            heldout["waiver_review_failures"] + regression["waiver_review_failures"]
+        ),
+        "efficiency": heldout["efficiency_failures"] + regression["efficiency_failures"],
+        "split_isolation": split_isolation["violations"],
+    }
+    return {
+        "ordinal": ordinal,
+        "cycle_id": cycle["id"],
+        "cycle_path": str(cycle_path),
+        "parent": parent,
+        "candidate": candidate,
+        "cycle_status": cycle["status"],
+        "validation_passed": validation_passed,
+        "promoted_harness": cycle.get("promoted_harness"),
+        "decision_artifact": cycle.get("decision_artifact"),
+        "suite_version": cycle.get("suite_version"),
+        "suite_digest": cycle.get("suite_digest"),
+        "coverage_digest": cycle.get("coverage_digest"),
+        "decisions": {
+            "heldout": heldout_gate.get("decision"),
+            "regression": regression_gate.get("decision"),
+            "composite": read_json(Path(composite_step["gate"])).get("decision"),
+        },
+        "failure_counts": failure_counts,
+        "heldout": heldout,
+        "regression": regression,
+        "split_isolation": split_isolation,
+        "composite_gate": composite_step["gate"],
+    }
+
+
+def find_step(cycle: dict[str, Any], name: str) -> dict[str, Any]:
+    for step in cycle.get("steps", []):
+        if step.get("name") == name:
+            return step
+    raise RuntimeError(f"Cycle {cycle.get('id')} is missing step {name}.")
+
+
+def summarize_gate_for_stability(*, gate: dict[str, Any], gate_path: Path) -> dict[str, Any]:
+    waiver_review = gate.get("waiver_review") or {}
+    return {
+        "gate": str(gate_path),
+        "decision": gate.get("decision"),
+        "pass_rate_delta": gate.get("pass_rate_delta"),
+        "attempt_delta": gate.get("metric_deltas", {}).get("attempts"),
+        "tool_call_delta": gate.get("metric_deltas", {}).get("tool_calls"),
+        "duration_ms_delta": gate.get("metric_deltas", {}).get("duration_ms"),
+        "cost_usd_delta": gate.get("metric_deltas", {}).get("cost_usd"),
+        "environment_failures": len(gate.get("environment_failures", [])),
+        "coverage_failures": len(gate.get("coverage_failures", [])),
+        "waiver_review_failures": len(gate.get("waiver_review_failures", [])),
+        "efficiency_failures": len(gate.get("efficiency_failures", [])),
+        "coverage_policy_digest": gate.get("coverage_policy_digest"),
+        "waiver_review_policy": gate.get("waiver_review_policy"),
+        "waiver_review_as_of": waiver_review.get("as_of"),
+        "waiver_review_due_count": waiver_review.get("review_due_count"),
+        "active_missing_waivers": waiver_review.get("active_missing_count"),
+        "efficiency_thresholds": gate.get("efficiency_thresholds"),
+    }
+
+
+def summarize_stability_totals(cycles: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "promoted": sum(1 for cycle in cycles if cycle["cycle_status"] == "promoted"),
+        "rejected": sum(1 for cycle in cycles if cycle["cycle_status"] == "rejected"),
+        "validation_failures": sum(1 for cycle in cycles if not cycle["validation_passed"]),
+        "heldout_gate_rejects": count_gate_rejects(cycles, "heldout"),
+        "regression_gate_rejects": count_gate_rejects(cycles, "regression"),
+        "split_isolation_failures": sum(
+            1 for cycle in cycles if cycle["split_isolation"]["status"] != "pass"
+        ),
+        "environment_failures": sum_gate_count(cycles, "environment_failures"),
+        "coverage_failures": sum_gate_count(cycles, "coverage_failures"),
+        "waiver_review_failures": sum_gate_count(cycles, "waiver_review_failures"),
+        "efficiency_failures": sum_gate_count(cycles, "efficiency_failures"),
+    }
+
+
+def summarize_stability_gate_contract(cycles: list[dict[str, Any]]) -> dict[str, Any]:
+    if not cycles:
+        return {}
+    first = cycles[0]
+    return {
+        "coverage_required": bool(first["coverage_digest"]),
+        "split_isolation_required": True,
+        "heldout": {
+            "coverage_policy_digest": first["heldout"].get("coverage_policy_digest"),
+            "efficiency_thresholds": first["heldout"].get("efficiency_thresholds"),
+            "waiver_review_policy": first["heldout"].get("waiver_review_policy"),
+        },
+        "regression": {
+            "coverage_policy_digest": first["regression"].get("coverage_policy_digest"),
+            "efficiency_thresholds": first["regression"].get("efficiency_thresholds"),
+            "waiver_review_policy": first["regression"].get("waiver_review_policy"),
+        },
+    }
+
+
+def summarize_stability_rollup(
+    cycles: list[dict[str, Any]],
+    totals: dict[str, int],
+) -> dict[str, Any]:
+    total_failures = (
+        totals["validation_failures"]
+        + totals["environment_failures"]
+        + totals["coverage_failures"]
+        + totals["waiver_review_failures"]
+        + totals["efficiency_failures"]
+        + totals["split_isolation_failures"]
+    )
+    return {
+        "all_cycles_passed": all(cycle["validation_passed"] for cycle in cycles),
+        "suite_digest_stable": one_unique_value(cycle.get("suite_digest") for cycle in cycles),
+        "coverage_digest_stable": one_unique_value(
+            cycle.get("coverage_digest") for cycle in cycles
+        ),
+        "coverage_policy_digest_stable": one_unique_value(
+            gate.get("coverage_policy_digest")
+            for cycle in cycles
+            for gate in (cycle["heldout"], cycle["regression"])
+        ),
+        "waiver_review_policy_stable": one_unique_value(
+            digest_payload(gate.get("waiver_review_policy"))
+            for cycle in cycles
+            for gate in (cycle["heldout"], cycle["regression"])
+        ),
+        "total_failures": total_failures,
+    }
+
+
+def one_unique_value(values: Any) -> bool:
+    unique = {value for value in values if value is not None}
+    return len(unique) <= 1
+
+
+def find_stability_failures(
+    cycles: list[dict[str, Any]],
+    rollup: dict[str, Any],
+) -> list[dict[str, Any]]:
+    failures = []
+    for cycle in cycles:
+        if cycle["validation_passed"]:
+            continue
+        failures.append(
+            {
+                "type": "cycle_validation_failed",
+                "cycle_id": cycle["cycle_id"],
+                "candidate": cycle["candidate"],
+                "decisions": cycle["decisions"],
+                "failure_counts": cycle["failure_counts"],
+            }
+        )
+    for key in (
+        "suite_digest_stable",
+        "coverage_digest_stable",
+        "coverage_policy_digest_stable",
+        "waiver_review_policy_stable",
+    ):
+        if not rollup.get(key):
+            failures.append({"type": key, "status": "failed"})
+    return failures
+
+
+def count_gate_rejects(cycles: list[dict[str, Any]], split: str) -> int:
+    return sum(1 for cycle in cycles if cycle[split]["decision"] != "promote")
+
+
+def sum_gate_count(cycles: list[dict[str, Any]], field: str) -> int:
+    return sum(cycle["heldout"][field] + cycle["regression"][field] for cycle in cycles)
+
+
 def write_split_isolation_audit(
     *,
     cycle_id: str,

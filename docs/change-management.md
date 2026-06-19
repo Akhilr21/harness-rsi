@@ -760,3 +760,52 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
 - Remediation: run repeated local cycles with the waiver review gate enabled,
   then add read-only external benchmark adapters once coverage, efficiency,
   split-isolation, and waiver-review gates remain stable together.
+
+## CM-0019: Repeated Local Cycle Stability
+
+- Date: 2026-06-19
+- Files changed: `src/harness_rsi/cycle.py`, `src/harness_rsi/cli.py`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: before external benchmark adapters, the local harness must prove
+  it can run repeated `Hn -> Hn+1` attempts under the full current promotion
+  contract. One successful cycle is not enough; adapter work should wait until
+  coverage, waiver review, efficiency, split isolation, composite gates, and
+  promotion-time digest rechecks remain stable across a short candidate chain.
+- Change made: added `harness-rsi experiment stability`, which runs repeated
+  experiment cycles, optionally promotes and advances the parent after each
+  passing cycle, and writes `.rsi/cycles/stability-*.json`. The report records
+  parent/candidate lineage, child cycle paths, heldout/regression/composite
+  decisions, split-isolation audit status, suite and coverage identity, waiver
+  review policy, efficiency thresholds, failure counts, rollup stability checks,
+  and a `stability_digest`.
+- Gate enforcement: no new gate semantics changed. CM-0019 validates the
+  existing gates together. A stability report passes only when every child cycle
+  has promoted heldout/regression gates, a passing split-isolation audit, stable
+  suite/coverage/policy identity, and no coverage, waiver-review, environment,
+  efficiency, or split-isolation failures. `--no-promote` remains useful for dry
+  runs: validation can pass while parent lineage stays unchanged.
+- Frontier/world-model note: frontier models and Decart/Oasis-style world-model
+  harnesses make repeated-cycle evidence more important, not less. A single
+  local win can be accidental. A short promoted chain shows the harness can keep
+  train-only proposal evidence, deterministic trace coverage, waiver review, and
+  efficiency boundaries intact before richer external or simulator-backed tasks
+  are attached.
+- Validation run: `pytest` reported 89 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` in `/private/tmp`
+  and ran `experiment stability --parent H0 --candidate-prefix H --cycles 2
+  --benchmark sim-v0 --mock`, producing a `pass` stability report for
+  `H0 -> H1 -> H2` with stable suite/coverage/policy digests, zero waiver review
+  failures, zero efficiency failures, zero split-isolation violations, and
+  `promotion_status=pass`.
+- Observation: CM-0015 through CM-0018 hardened individual boundaries, but the
+  missing evidence was operational. Reviewers could inspect one cycle at a time,
+  yet there was no single artifact answering whether repeated candidate attempts
+  preserved the same gate contract without manual repair.
+- Learning: local cycle stability is the adapter-readiness gate. External
+  benchmarks should contribute task sources and fixture metadata, not become the
+  first place where promotion-boundary interactions are tested together.
+- Remediation: use stability reports as the required smoke before adding
+  read-only Terminal-Bench, SWE-bench, tau/tau3-style, or live world-model
+  adapters. If a future adapter changes gate semantics, it should create a new
+  CM entry rather than hiding that change inside adapter plumbing.

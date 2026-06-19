@@ -307,6 +307,29 @@ Rejected cycles also write first-class decision artifacts under
 `.rsi/decisions/` with proposal, heldout gate, regression gate, composite gate,
 score deltas, and metric deltas.
 
+## Repeated Local Cycle Stability
+
+One successful cycle is not enough evidence for external benchmark adapters.
+Before adding Terminal-Bench, SWE-bench, tau-style tasks, or live world-model
+adapters, the local harness should show that repeated `Hn -> Hn+1` attempts keep
+the same measurement contract intact.
+
+`experiment stability` runs multiple cycles and writes
+`.rsi/cycles/stability-*.json`. The report summarizes:
+
+- parent/candidate chain and whether the parent advanced after promotion
+- heldout, regression, and composite decisions for every cycle
+- split-isolation audit status and digest
+- suite, coverage, coverage-policy, and waiver-review policy stability
+- coverage, waiver-review, environment, efficiency, and split-isolation failure
+  counts
+- a digest over the stability report itself
+
+This is the adapter-readiness check. External adapters should add task sources
+and fixture metadata, not new promotion semantics. If local `sim-v0` cycles
+cannot repeatedly promote or reject candidates with deterministic artifacts, a
+public benchmark adapter will only make the failure harder to inspect.
+
 ## Frontier Model Interaction
 
 Frontier models make the harness question sharper because the model may already

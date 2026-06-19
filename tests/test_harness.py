@@ -11,6 +11,7 @@ from harness_rsi.benchmarks import compare_runs, digest_payload, evaluator_diges
 from harness_rsi.cli import main
 from harness_rsi.cycle import (
     run_experiment_cycle,
+    run_experiment_stability,
     write_composite_gate,
     write_split_isolation_audit,
 )
@@ -1663,6 +1664,246 @@ def test_experiment_cycle_records_suite_identity_for_sim_v0(tmp_path: Path) -> N
         assert decision["suite_digest"] == manifest["suite_digest"]
         assert decision["evaluator_digests"]["heldout"]
         assert decision["evaluator_digests"]["regression"]
+
+
+def test_experiment_stability_promotes_sequential_sim_v0_chain(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        report_path = run_experiment_stability(
+            parent="H0",
+            candidate_prefix="H",
+            cycles=2,
+            benchmark="sim-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=True,
+        )
+
+        report = read_json(report_path)
+        assert report["status"] == "pass"
+        assert report["validation_status"] == "pass"
+        assert report["promotion_status"] == "pass"
+        assert report["parent_start"] == "H0"
+        assert report["final_parent"] == "H2"
+        assert report["requested_cycles"] == 2
+        assert report["completed_cycles"] == 2
+        assert report["totals"] == {
+            "promoted": 2,
+            "rejected": 0,
+            "validation_failures": 0,
+            "heldout_gate_rejects": 0,
+            "regression_gate_rejects": 0,
+            "split_isolation_failures": 0,
+            "environment_failures": 0,
+            "coverage_failures": 0,
+            "waiver_review_failures": 0,
+            "efficiency_failures": 0,
+        }
+        assert report["kind"] == "local_cycle_stability"
+        assert report["gate_contract"]["split_isolation_required"] is True
+        assert report["gate_contract"]["heldout"]["waiver_review_policy"] == {
+            "fail_on_overdue_waivers": True,
+            "waiver_due_within_days": 30,
+            "waiver_review_as_of": "2026-06-19",
+        }
+        assert report["rollup"] == {
+            "all_cycles_passed": True,
+            "suite_digest_stable": True,
+            "coverage_digest_stable": True,
+            "coverage_policy_digest_stable": True,
+            "waiver_review_policy_stable": True,
+            "total_failures": 0,
+        }
+        assert report["failures"] == []
+        assert [cycle["parent"] for cycle in report["cycles"]] == ["H0", "H1"]
+        assert [cycle["candidate"] for cycle in report["cycles"]] == ["H1", "H2"]
+        assert {cycle["cycle_status"] for cycle in report["cycles"]} == {"promoted"}
+        assert {cycle["validation_passed"] for cycle in report["cycles"]} == {True}
+        assert report["stability_digest"]
+
+        for cycle in report["cycles"]:
+            assert cycle["suite_version"] == "sim-v0.1"
+            assert cycle["heldout"]["decision"] == "promote"
+            assert cycle["regression"]["decision"] == "promote"
+            assert cycle["decisions"] == {
+                "heldout": "promote",
+                "regression": "promote",
+                "composite": "promote",
+            }
+            assert cycle["failure_counts"] == {
+                "environment": 0,
+                "coverage": 0,
+                "waiver_review": 0,
+                "efficiency": 0,
+                "split_isolation": 0,
+            }
+            assert cycle["heldout"]["waiver_review_as_of"] == "2026-06-19"
+            assert cycle["regression"]["waiver_review_as_of"] == "2026-06-19"
+            assert cycle["heldout"]["waiver_review_failures"] == 0
+            assert cycle["regression"]["waiver_review_failures"] == 0
+            assert cycle["heldout"]["efficiency_failures"] == 0
+            assert cycle["regression"]["efficiency_failures"] == 0
+            assert cycle["split_isolation"]["status"] == "pass"
+            assert cycle["split_isolation"]["violations"] == 0
+            assert Path(cycle["heldout"]["gate"]).exists()
+            assert Path(cycle["regression"]["gate"]).exists()
+            assert Path(cycle["composite_gate"]).exists()
+
+        h2 = read_json(tmp_path / ".rsi" / "harnesses" / "H2.json")
+        assert h2["status"] == "promoted"
+        assert h2["parent"] == "H1"
+        assert h2["lineage"]["heldout_gate"]
+        assert h2["lineage"]["regression_gate"]
+        assert h2["lineage"]["split_isolation_audit"]
+        assert h2["lineage"]["waiver_review_policy"]["waiver_review_as_of"] == "2026-06-19"
+
+
+def test_experiment_stability_no_promote_keeps_validation_separate(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        report_path = run_experiment_stability(
+            parent="H0",
+            candidate_prefix="DryRun",
+            first_candidate_index=1,
+            cycles=2,
+            benchmark="sim-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=False,
+        )
+
+        report = read_json(report_path)
+        assert report["status"] == "pass"
+        assert report["validation_status"] == "pass"
+        assert report["promotion_status"] == "not_requested"
+        assert report["parent_start"] == "H0"
+        assert report["final_parent"] == "H0"
+        assert [cycle["parent"] for cycle in report["cycles"]] == ["H0", "H0"]
+        assert [cycle["candidate"] for cycle in report["cycles"]] == ["DryRun1", "DryRun2"]
+        assert {cycle["cycle_status"] for cycle in report["cycles"]} == {"rejected"}
+        assert {cycle["validation_passed"] for cycle in report["cycles"]} == {True}
+        assert report["totals"]["rejected"] == 2
+        assert report["totals"]["validation_failures"] == 0
+        assert read_json(tmp_path / ".rsi" / "harnesses" / "DryRun1.json")["status"] == "candidate"
+        assert read_json(tmp_path / ".rsi" / "harnesses" / "DryRun2.json")["status"] == "candidate"
+
+
+def test_experiment_stability_reports_overdue_waiver_gate_failure(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        policy_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "gate_policy.json"
+        policy = read_json(policy_path)
+        policy["heldout"]["waiver_review_as_of"] = "2026-10-01"
+        policy["regression"]["waiver_review_as_of"] = "2026-10-01"
+        write_json(policy_path, policy)
+
+        report_path = run_experiment_stability(
+            parent="H0",
+            candidate_prefix="H",
+            cycles=1,
+            benchmark="sim-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=True,
+        )
+
+        report = read_json(report_path)
+        assert report["status"] == "review"
+        assert report["validation_status"] == "fail"
+        assert report["promotion_status"] == "partial"
+        assert report["final_parent"] == "H0"
+        assert report["totals"]["promoted"] == 0
+        assert report["totals"]["rejected"] == 1
+        assert report["totals"]["validation_failures"] == 1
+        assert report["totals"]["waiver_review_failures"] == 8
+        assert report["rollup"]["all_cycles_passed"] is False
+        assert report["rollup"]["waiver_review_policy_stable"] is True
+        assert report["failures"] == [
+            {
+                "type": "cycle_validation_failed",
+                "cycle_id": report["cycles"][0]["cycle_id"],
+                "candidate": "H1",
+                "decisions": {
+                    "heldout": "reject",
+                    "regression": "reject",
+                    "composite": "reject",
+                },
+                "failure_counts": {
+                    "environment": 0,
+                    "coverage": 0,
+                    "waiver_review": 8,
+                    "efficiency": 0,
+                    "split_isolation": 0,
+                },
+            }
+        ]
+        assert report["cycles"][0]["heldout"]["waiver_review_failures"] == 4
+        assert report["cycles"][0]["regression"]["waiver_review_failures"] == 4
+
+
+def test_experiment_stability_cli_writes_report(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert (
+            main(
+                [
+                    "experiment",
+                    "stability",
+                    "--parent",
+                    "H0",
+                    "--candidate-prefix",
+                    "H",
+                    "--cycles",
+                    "1",
+                    "--benchmark",
+                    "sim-v0",
+                    "--mock",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Wrote stability report to" in output
+        reports = sorted((tmp_path / ".rsi" / "cycles").glob("stability-*.json"))
+        assert len(reports) == 1
+        report = read_json(reports[0])
+        assert report["status"] == "pass"
+        assert report["completed_cycles"] == 1
+
+
+def test_experiment_stability_rejects_invalid_cycle_count(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        try:
+            run_experiment_stability(
+                parent="H0",
+                candidate_prefix="H",
+                cycles=0,
+                benchmark="synthetic",
+                model=None,
+                reasoning_effort="medium",
+                mock=True,
+                min_heldout_delta=0,
+                max_regression_drop=0,
+                promote=True,
+            )
+        except RuntimeError as error:
+            assert "cycles" in str(error)
+        else:
+            raise AssertionError("Expected invalid cycle count rejection.")
 
 
 def test_split_isolation_audit_rejects_embedded_heldout_evidence(tmp_path: Path) -> None:

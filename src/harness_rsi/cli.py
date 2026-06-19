@@ -12,7 +12,7 @@ from harness_rsi.benchmarks import (
     write_coverage_report,
     write_waiver_report,
 )
-from harness_rsi.cycle import run_experiment_cycle
+from harness_rsi.cycle import run_experiment_cycle, run_experiment_stability
 from harness_rsi.decisions import promote, reject
 from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.improve import latest_run, propose_patch
@@ -176,6 +176,25 @@ def experiment_cycle(args: argparse.Namespace) -> int:
         promote=not args.no_promote,
     )
     print(f"Wrote cycle summary to {path}")
+    print(readable_json(read_json(path)))
+    return 0
+
+
+def experiment_stability(args: argparse.Namespace) -> int:
+    path = run_experiment_stability(
+        parent=args.parent,
+        candidate_prefix=args.candidate_prefix,
+        cycles=args.cycles,
+        benchmark=args.benchmark,
+        model=args.model,
+        reasoning_effort=args.reasoning_effort,
+        mock=args.mock,
+        min_heldout_delta=args.min_heldout_delta,
+        max_regression_drop=args.max_regression_drop,
+        promote=not args.no_promote,
+        first_candidate_index=args.first_candidate_index,
+    )
+    print(f"Wrote stability report to {path}")
     print(readable_json(read_json(path)))
     return 0
 
@@ -387,6 +406,23 @@ def build_parser() -> argparse.ArgumentParser:
     cycle_parser.add_argument("--max-regression-drop", type=float, default=0.0)
     cycle_parser.add_argument("--no-promote", action="store_true")
     cycle_parser.set_defaults(func=experiment_cycle)
+
+    stability_parser = experiment_sub.add_parser(
+        "stability",
+        help="Run repeated experiment cycles and summarize gate stability.",
+    )
+    stability_parser.add_argument("--parent", required=True)
+    stability_parser.add_argument("--candidate-prefix", default="H")
+    stability_parser.add_argument("--first-candidate-index", type=int)
+    stability_parser.add_argument("--cycles", type=int, default=2)
+    stability_parser.add_argument("--benchmark", default="synthetic")
+    stability_parser.add_argument("--model")
+    stability_parser.add_argument("--reasoning-effort", default=DEFAULT_HARNESS["reasoning_effort"])
+    stability_parser.add_argument("--mock", action="store_true")
+    stability_parser.add_argument("--min-heldout-delta", type=float, default=0.0)
+    stability_parser.add_argument("--max-regression-drop", type=float, default=0.0)
+    stability_parser.add_argument("--no-promote", action="store_true")
+    stability_parser.set_defaults(func=experiment_stability)
 
     return parser
 

@@ -300,12 +300,14 @@ CM-0017 added attempts/tool-call efficiency gates and opt-in duration/cost
 thresholds.
 CM-0018 added deterministic overdue-waiver review gates for active missing
 coverage debt.
+CM-0019 added repeated local-cycle stability reports that run the full current
+gate contract across promoted or dry-run candidate chains.
 
 The next increment should target:
 
-1. Run repeated local cycles with coverage, waiver review, efficiency, and
-   split-isolation gates enabled together.
-2. Add read-only external adapters for Terminal-Bench, SWE-bench, and
+1. Add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
-3. Keep live simulator or world-model adapters behind stable local trace
+2. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
+3. Add sanitized real traces only when their source, fixture version, and split
+   contract can be replayed.
