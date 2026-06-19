@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from harness_rsi.benchmarks import harness_path
+from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, write_json
 
 
@@ -14,7 +15,6 @@ def create_candidate_version(
     parent: str,
     candidate: str,
     proposal_path: Path,
-    gate_path: Path,
     overwrite: bool = False,
 ) -> Path:
     parent_path = harness_path(parent)
@@ -25,40 +25,81 @@ def create_candidate_version(
         raise RuntimeError(f"Candidate harness already exists: {candidate_path}")
 
     proposal = read_json(proposal_path)
-    gate = read_json(gate_path)
-    if gate.get("decision") != "promote":
-        raise RuntimeError("Cannot create candidate harness from a rejected gate.")
-    if gate.get("baseline_harness") != parent:
-        raise RuntimeError(
-            f"Gate baseline {gate.get('baseline_harness')} does not match parent {parent}."
-        )
-    if gate.get("candidate_harness") not in {candidate, None}:
-        raise RuntimeError(
-            f"Gate candidate {gate.get('candidate_harness')} does not match {candidate}."
-        )
-
     parent_config = read_json(parent_path)
     config = apply_config_patch(parent_config, proposal.get("config_patch", {}))
     config.update(
         {
             "id": candidate,
             "parent": parent,
+            "status": "candidate",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "created_from_proposal": proposal.get("id") or proposal_path.stem,
-            "created_from_gate": gate_path.name,
             "lineage": {
                 "parent": parent,
                 "proposal": str(proposal_path),
-                "gate": str(gate_path),
-                "baseline_run": gate.get("baseline_run"),
-                "candidate_run": gate.get("candidate_run"),
-                "benchmark": gate.get("benchmark"),
-                "split": gate.get("split"),
-                "pass_rate_delta": gate.get("pass_rate_delta"),
             },
         }
     )
     candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(candidate_path, config)
+    return candidate_path
+
+
+def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
+    candidate_path = harness_path(candidate)
+    if not candidate_path.exists():
+        raise RuntimeError(f"Candidate harness not found: {candidate_path}")
+
+    config = read_json(candidate_path)
+    gate = read_json(gate_path)
+    if gate.get("decision") != "promote":
+        raise RuntimeError("Cannot promote harness from a rejected gate.")
+    if config.get("status") == "promoted":
+        raise RuntimeError(f"Harness {candidate} is already promoted.")
+    if config.get("status") != "candidate":
+        raise RuntimeError(f"Harness {candidate} is not a candidate.")
+    if config.get("id") != candidate:
+        raise RuntimeError(
+            f"Harness file {candidate_path} declares id {config.get('id')}, not {candidate}."
+        )
+    if gate.get("baseline_harness") != config.get("parent"):
+        raise RuntimeError(
+            "Gate baseline "
+            f"{gate.get('baseline_harness')} does not match parent {config.get('parent')}."
+        )
+    if gate.get("candidate_harness") != candidate:
+        raise RuntimeError(
+            f"Gate candidate {gate.get('candidate_harness')} does not match {candidate}."
+        )
+    if gate.get("model") and gate.get("model") != config.get("model"):
+        raise RuntimeError(
+            f"Gate model {gate.get('model')} does not match harness model {config.get('model')}."
+        )
+    candidate_digest = gate.get("candidate_harness_digest")
+    if not candidate_digest:
+        raise RuntimeError("Gate is missing candidate harness digest.")
+    if candidate_digest != harness_behavior_digest(config):
+        raise RuntimeError("Gate candidate digest does not match current candidate harness.")
+
+    lineage = deepcopy(config.get("lineage", {}))
+    lineage.update(
+        {
+            "gate": str(gate_path),
+            "baseline_run": gate.get("baseline_run"),
+            "candidate_run": gate.get("candidate_run"),
+            "benchmark": gate.get("benchmark"),
+            "split": gate.get("split"),
+            "pass_rate_delta": gate.get("pass_rate_delta"),
+        }
+    )
+    config.update(
+        {
+            "status": "promoted",
+            "promoted_at": datetime.now(timezone.utc).isoformat(),
+            "promoted_from_gate": gate_path.name,
+            "lineage": lineage,
+        }
+    )
     write_json(candidate_path, config)
     return candidate_path
 
@@ -92,6 +133,7 @@ def list_harness_versions() -> list[dict[str, Any]]:
                 "declared_id": config.get("id", path.stem),
                 "id_matches_filename": config.get("id", path.stem) == path.stem,
                 "parent": config.get("parent"),
+                "status": config.get("status"),
                 "model": config.get("model"),
                 "path": str(path),
                 "created_at": config.get("created_at"),

@@ -98,11 +98,17 @@ performance.
 
 ## Version-Aware Promotion
 
-Benchmark promotion writes a new harness file instead of mutating the parent:
+Benchmark promotion uses two phases. First a proposal creates a candidate
+harness, then a promote gate promotes that existing candidate:
 
 ```text
 .rsi/harnesses/H0.json
-.rsi/harnesses/H1.json
+.rsi/harnesses/H1.json  # status: candidate
+
+benchmark run --harness H1
+benchmark gate ...
+
+.rsi/harnesses/H1.json  # status: promoted
 ```
 
 `H1` must record:
@@ -113,6 +119,7 @@ Benchmark promotion writes a new harness file instead of mutating the parent:
 - baseline and candidate run IDs
 - benchmark and split
 - observed pass-rate delta
+- behavior digest evaluated by the gate
 
 Promotion rejects:
 
@@ -121,6 +128,7 @@ Promotion rejects:
 - candidate ID mismatch
 - existing version overwrite
 - model changes inside `config_patch`
+- missing or mismatched candidate behavior digests
 
 This keeps harness-level RSI legible: each new harness version is a reviewable
 artifact with its own evidence trail.

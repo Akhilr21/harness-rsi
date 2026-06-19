@@ -103,3 +103,29 @@ Each meaningful change should record:
   benchmark work or make it require a gate when targeting versioned harnesses.
   A later cleanup command should repair or quarantine malformed local harness
   files instead of only listing the mismatch.
+
+## CM-0005: Candidate Lifecycle Correction
+
+- Date: 2026-06-18
+- Files changed: `src/harness_rsi/versions.py`, `src/harness_rsi/cli.py`,
+  `src/harness_rsi/harness.py`, `src/harness_rsi/benchmarks.py`,
+  `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/change-management.md`
+- Hypothesis: the prior version-aware flow was still inverted because it created
+  `H1` after a gate, even though `H1` must exist before it can be evaluated.
+- Change made: split the lifecycle into `harness create-candidate` and
+  `harness promote`. Candidate creation writes `status: candidate` from a parent
+  and proposal. Promotion mutates that existing candidate to `status: promoted`
+  only after a promote gate.
+- Validation run: `pytest` reported 19 passing tests; `ruff check .` passed;
+  `git diff --check` passed.
+- Observation: gates also need to prove that the evaluated candidate behavior is
+  the same behavior being promoted. The run summary and gate comparison now
+  include `harness_behavior_digest`, and promotion rejects missing or mismatched
+  candidate digests.
+- Learning: Hn+1 has two states, candidate and promoted. Treating candidate
+  creation and promotion as one action hides the most important experimental
+  boundary.
+- Remediation: next increment should generate proposals from train runs and wire
+  a full automated cycle: run train, propose candidate, run heldout/regression,
+  gate, then promote or reject.

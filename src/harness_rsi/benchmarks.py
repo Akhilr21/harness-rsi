@@ -202,6 +202,8 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
         "model": baseline_config.get("model"),
         "baseline_harness": baseline_metadata.get("harness"),
         "candidate_harness": candidate_metadata.get("harness"),
+        "baseline_harness_digest": baseline.get("harness_behavior_digest"),
+        "candidate_harness_digest": candidate.get("harness_behavior_digest"),
         "benchmark": candidate_metadata.get("benchmark"),
         "split": candidate_metadata.get("split"),
         "baseline_pass_rate": baseline["pass_rate"],

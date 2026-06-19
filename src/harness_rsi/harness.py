@@ -38,6 +38,18 @@ def task_digest(tasks: list[dict[str, Any]]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def harness_behavior_digest(config: dict[str, Any]) -> str:
+    behavior = {
+        "model": config.get("model"),
+        "reasoning_effort": config.get("reasoning_effort"),
+        "max_retries": config.get("max_retries"),
+        "tools": config.get("tools", {}),
+        "prompt": config.get("prompt", ""),
+    }
+    encoded = json.dumps(behavior, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def build_prompt(config: dict[str, Any], task: dict[str, Any], learnings: str) -> str:
     return "\n\n".join(
         [
@@ -70,6 +82,7 @@ def run_suite(
 
     tasks = read_jsonl(tasks_path)
     tasks_sha = task_digest(tasks)
+    harness_sha = harness_behavior_digest(config)
     learnings = LEARNINGS.read_text() if LEARNINGS.exists() else ""
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     run_dir = RUNS / run_id
@@ -83,6 +96,7 @@ def run_suite(
             "tasks_path": str(tasks_path),
             "task_count": len(tasks),
             "task_digest": tasks_sha,
+            "harness_behavior_digest": harness_sha,
             "metadata": metadata or {},
         },
     )
@@ -140,6 +154,7 @@ def run_suite(
         "run_id": run_id,
         "metadata": metadata or {},
         "task_digest": tasks_sha,
+        "harness_behavior_digest": harness_sha,
         "tasks": len(results),
         "passed": passed,
         "pass_rate": passed / len(results) if results else 0,

@@ -58,10 +58,14 @@ Create the first synthetic benchmark environment and baseline harness:
 harness-rsi benchmark init
 ```
 
-Run `H0` on heldout, then run a candidate `H1` after creating or copying a
-harness config into `.rsi/harnesses/H1.json`:
+Create a candidate `H1` from a proposal, then run `H0` and `H1` on heldout:
 
 ```bash
+harness-rsi harness create-candidate \
+  --parent H0 \
+  --candidate H1 \
+  --proposal .rsi/proposals/<proposal-id>.json
+
 harness-rsi benchmark run --split heldout --harness H0 --mock
 harness-rsi benchmark run --split heldout --harness H1 --mock
 ```
@@ -83,19 +87,19 @@ harness-rsi benchmark gate \
 The benchmark layer enforces fixed-model comparison, matching task order, and
 matching task/evaluator definitions.
 
-Create a new harness version only after a promote gate:
+Promote the existing candidate only after a promote gate:
 
 ```bash
 harness-rsi harness promote \
-  --parent H0 \
   --candidate H1 \
-  --proposal .rsi/proposals/<proposal-id>.json \
   --gate .rsi/gates/<gate-id>.json
 ```
 
-This writes `.rsi/harnesses/H1.json` with lineage back to the parent, proposal,
-gate, benchmark split, and run evidence. Promotion refuses rejected gates,
-parent/candidate mismatches, existing version overwrites, and model changes.
+This mutates `.rsi/harnesses/H1.json` from `status: candidate` to
+`status: promoted` and records lineage back to the parent, proposal, gate,
+benchmark split, and run evidence. Promotion refuses rejected gates,
+parent/candidate mismatches, missing or mismatched behavior digests, existing
+promotions, and model changes.
 
 ## Real model runs
 

@@ -10,7 +10,11 @@ from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.improve import latest_run, propose_patch
 from harness_rsi.io import read_json, write_json
 from harness_rsi.paths import HARNESS, LEARNINGS, ROOT, RUNS, TASKS, ensure_dirs
-from harness_rsi.versions import create_candidate_version, list_harness_versions
+from harness_rsi.versions import (
+    create_candidate_version,
+    list_harness_versions,
+    promote_candidate_version,
+)
 
 
 SAMPLE_TASKS = """\
@@ -107,15 +111,20 @@ def benchmark_gate(args: argparse.Namespace) -> int:
     return 0
 
 
-def harness_promote(args: argparse.Namespace) -> int:
+def harness_create_candidate(args: argparse.Namespace) -> int:
     path = create_candidate_version(
         parent=args.parent,
         candidate=args.candidate,
         proposal_path=Path(args.proposal),
-        gate_path=Path(args.gate),
         overwrite=args.overwrite,
     )
     print(f"Wrote candidate harness to {path}")
+    return 0
+
+
+def harness_promote(args: argparse.Namespace) -> int:
+    path = promote_candidate_version(candidate=args.candidate, gate_path=Path(args.gate))
+    print(f"Promoted candidate harness at {path}")
     return 0
 
 
@@ -194,27 +203,33 @@ def build_parser() -> argparse.ArgumentParser:
     harness_list_parser = harness_sub.add_parser("list", help="List harness versions.")
     harness_list_parser.set_defaults(func=harness_list)
 
+    harness_create_parser = harness_sub.add_parser(
+        "create-candidate",
+        help="Create a candidate harness version from a parent and proposal.",
+    )
+    harness_create_parser.add_argument("--parent", required=True)
+    harness_create_parser.add_argument("--candidate", "--new-id", required=True)
+    harness_create_parser.add_argument("--proposal", required=True)
+    harness_create_parser.add_argument("--overwrite", action="store_true")
+    harness_create_parser.set_defaults(func=harness_create_candidate)
+
     harness_promote_parser = harness_sub.add_parser(
         "promote",
-        help="Create a new harness version from a proposal and promote gate.",
+        help="Promote an existing candidate harness using a promote gate.",
     )
-    harness_promote_parser.add_argument("--parent", required=True)
     harness_promote_parser.add_argument("--candidate", "--new-id", required=True)
-    harness_promote_parser.add_argument("--proposal", required=True)
     harness_promote_parser.add_argument("--gate", required=True)
-    harness_promote_parser.add_argument("--overwrite", action="store_true")
     harness_promote_parser.set_defaults(func=harness_promote)
 
     harness_version_parser = harness_sub.add_parser(
         "propose-version",
-        help="Alias for `harness promote`.",
+        help="Alias for `harness create-candidate`.",
     )
     harness_version_parser.add_argument("--parent", required=True)
     harness_version_parser.add_argument("--candidate", "--new-id", required=True)
     harness_version_parser.add_argument("--proposal", required=True)
-    harness_version_parser.add_argument("--gate", required=True)
     harness_version_parser.add_argument("--overwrite", action="store_true")
-    harness_version_parser.set_defaults(func=harness_promote)
+    harness_version_parser.set_defaults(func=harness_create_candidate)
 
     return parser
 
