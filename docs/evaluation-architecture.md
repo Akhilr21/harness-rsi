@@ -96,6 +96,35 @@ The first implemented metric is pass rate. Later metrics should include cost,
 latency, retries, tool errors, failure-family coverage, and per-environment
 performance.
 
+## Version-Aware Promotion
+
+Benchmark promotion writes a new harness file instead of mutating the parent:
+
+```text
+.rsi/harnesses/H0.json
+.rsi/harnesses/H1.json
+```
+
+`H1` must record:
+
+- parent harness ID
+- source proposal
+- source gate
+- baseline and candidate run IDs
+- benchmark and split
+- observed pass-rate delta
+
+Promotion rejects:
+
+- rejected gates
+- parent mismatch
+- candidate ID mismatch
+- existing version overwrite
+- model changes inside `config_patch`
+
+This keeps harness-level RSI legible: each new harness version is a reviewable
+artifact with its own evidence trail.
+
 ## Frontier Model Interaction
 
 Frontier models make the harness question sharper because the model may already

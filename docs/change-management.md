@@ -75,3 +75,31 @@ Each meaningful change should record:
   benchmark/split mismatch rejection, and unique gate artifact names.
   Implemented unique gate names with a decision timestamp after the smoke test
   exposed overwrite risk.
+
+## CM-0004: Version-Aware Harness Promotion
+
+- Date: 2026-06-18
+- Files changed: `src/harness_rsi/versions.py`, `src/harness_rsi/cli.py`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/change-management.md`
+- Hypothesis: harness-level improvement needs immutable-ish Hn artifacts with
+  lineage, not direct mutation of the current harness config.
+- Change made: added `harness-rsi harness promote`, `harness-rsi harness list`,
+  and a versioning module that creates `H1` from `H0` only after a promote gate.
+  The new version records proposal/gate/run lineage and rejects rejected gates,
+  parent mismatch, candidate mismatch, existing-version overwrites, and model
+  changes.
+- Validation run: `pytest` reported 17 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke test created `H2` from `H0` using a
+  promote gate and proposal artifact, then listed harness versions.
+- Observation: the legacy `promote` command still exists for proposal-only
+  mutation of `.rsi/harness.json`; benchmark-grade promotion now has a separate
+  safer path. The smoke test also surfaced an old local manual copy where
+  `.rsi/harnesses/H1.json` declared `id: H0`, so `harness list` now exposes
+  filename/declared-ID mismatches.
+- Learning: version creation is itself part of the evaluation harness. If Hn+1
+  is not an explicit artifact, the experiment cannot be replayed or audited.
+- Remediation: next increment should either deprecate legacy `promote` for
+  benchmark work or make it require a gate when targeting versioned harnesses.
+  A later cleanup command should repair or quarantine malformed local harness
+  files instead of only listing the mismatch.

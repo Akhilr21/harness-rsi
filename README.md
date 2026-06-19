@@ -83,6 +83,20 @@ harness-rsi benchmark gate \
 The benchmark layer enforces fixed-model comparison, matching task order, and
 matching task/evaluator definitions.
 
+Create a new harness version only after a promote gate:
+
+```bash
+harness-rsi harness promote \
+  --parent H0 \
+  --candidate H1 \
+  --proposal .rsi/proposals/<proposal-id>.json \
+  --gate .rsi/gates/<gate-id>.json
+```
+
+This writes `.rsi/harnesses/H1.json` with lineage back to the parent, proposal,
+gate, benchmark split, and run evidence. Promotion refuses rejected gates,
+parent/candidate mismatches, existing version overwrites, and model changes.
+
 ## Real model runs
 
 Set an API key and omit `--mock`:

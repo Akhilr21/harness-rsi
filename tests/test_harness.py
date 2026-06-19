@@ -8,6 +8,7 @@ from pathlib import Path
 from harness_rsi.benchmarks import compare_runs, gate_candidate
 from harness_rsi.cli import main
 from harness_rsi.io import read_json, write_json
+from harness_rsi.versions import create_candidate_version, list_harness_versions
 
 
 @contextmanager
@@ -156,6 +157,190 @@ def test_compare_rejects_split_mismatch(tmp_path: Path) -> None:
         raise AssertionError("Expected split mismatch rejection.")
 
 
+def test_create_candidate_version_from_promote_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = tmp_path / ".rsi" / "proposals" / "proposal-test.json"
+        write_json(
+            proposal,
+            {
+                "id": "proposal-test",
+                "config_patch": {
+                    "prompt_append": "Check heldout behavior before promotion.",
+                    "max_retries": 2,
+                },
+            },
+        )
+        gate = tmp_path / ".rsi" / "gates" / "gate-test.json"
+        write_json(
+            gate,
+            {
+                "decision": "promote",
+                "baseline_harness": "H0",
+                "candidate_harness": "H1",
+                "baseline_run": "baseline",
+                "candidate_run": "candidate",
+                "benchmark": "synthetic",
+                "split": "heldout",
+                "pass_rate_delta": 0.2,
+            },
+        )
+
+        path = create_candidate_version(
+            parent="H0",
+            candidate="H1",
+            proposal_path=proposal,
+            gate_path=gate,
+        )
+        config = read_json(path)
+        assert config["id"] == "H1"
+        assert config["parent"] == "H0"
+        assert config["max_retries"] == 2
+        assert "Check heldout behavior" in config["prompt"]
+        assert config["lineage"]["pass_rate_delta"] == 0.2
+
+
+def test_create_candidate_version_rejects_rejected_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        gate = write_gate(tmp_path, decision="reject")
+        try:
+            create_candidate_version(
+                parent="H0",
+                candidate="H1",
+                proposal_path=proposal,
+                gate_path=gate,
+            )
+        except RuntimeError as error:
+            assert "rejected gate" in str(error)
+        else:
+            raise AssertionError("Expected rejected gate to block version creation.")
+
+
+def test_create_candidate_version_rejects_parent_mismatch(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        gate = write_gate(tmp_path, baseline_harness="H9")
+        try:
+            create_candidate_version(
+                parent="H0",
+                candidate="H1",
+                proposal_path=proposal,
+                gate_path=gate,
+            )
+        except RuntimeError as error:
+            assert "does not match parent" in str(error)
+        else:
+            raise AssertionError("Expected parent mismatch rejection.")
+
+
+def test_create_candidate_version_rejects_candidate_mismatch(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        gate = write_gate(tmp_path, candidate_harness="H9")
+        try:
+            create_candidate_version(
+                parent="H0",
+                candidate="H1",
+                proposal_path=proposal,
+                gate_path=gate,
+            )
+        except RuntimeError as error:
+            assert "does not match H1" in str(error)
+        else:
+            raise AssertionError("Expected candidate mismatch rejection.")
+
+
+def test_create_candidate_version_refuses_overwrite(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        gate = write_gate(tmp_path)
+        create_candidate_version(
+            parent="H0",
+            candidate="H1",
+            proposal_path=proposal,
+            gate_path=gate,
+        )
+        try:
+            create_candidate_version(
+                parent="H0",
+                candidate="H1",
+                proposal_path=proposal,
+                gate_path=gate,
+            )
+        except RuntimeError as error:
+            assert "already exists" in str(error)
+        else:
+            raise AssertionError("Expected overwrite rejection.")
+
+
+def test_create_candidate_version_rejects_model_change(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = tmp_path / ".rsi" / "proposals" / "proposal-test.json"
+        write_json(
+            proposal,
+            {
+                "id": "proposal-test",
+                "config_patch": {"model": "different-model"},
+            },
+        )
+        gate = write_gate(tmp_path)
+        try:
+            create_candidate_version(
+                parent="H0",
+                candidate="H1",
+                proposal_path=proposal,
+                gate_path=gate,
+            )
+        except RuntimeError as error:
+            assert "cannot change the model" in str(error)
+        else:
+            raise AssertionError("Expected model-change rejection.")
+
+
+def test_harness_promote_cli_creates_version(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        gate = write_gate(tmp_path)
+        assert (
+            main(
+                [
+                    "harness",
+                    "promote",
+                    "--parent",
+                    "H0",
+                    "--candidate",
+                    "H1",
+                    "--proposal",
+                    str(proposal),
+                    "--gate",
+                    str(gate),
+                ]
+            )
+            == 0
+        )
+        versions = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
+        assert versions["id"] == "H1"
+        assert versions["created_from_gate"] == gate.name
+
+
+def test_harness_list_flags_filename_id_mismatch(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        h1 = tmp_path / ".rsi" / "harnesses" / "H1.json"
+        write_json(h1, read_json(tmp_path / ".rsi" / "harnesses" / "H0.json"))
+        versions = list_harness_versions()
+        h1_listing = next(item for item in versions if item["name"] == "H1")
+        assert h1_listing["declared_id"] == "H0"
+        assert h1_listing["id_matches_filename"] is False
+
+
 def write_fake_run(
     path: Path,
     *,
@@ -190,3 +375,39 @@ def write_fake_run(
         },
     )
     return path
+
+
+def write_proposal(path: Path) -> Path:
+    proposal = path / ".rsi" / "proposals" / "proposal-test.json"
+    write_json(
+        proposal,
+        {
+            "id": "proposal-test",
+            "config_patch": {"prompt_append": "Use the gate evidence."},
+        },
+    )
+    return proposal
+
+
+def write_gate(
+    path: Path,
+    *,
+    decision: str = "promote",
+    baseline_harness: str = "H0",
+    candidate_harness: str = "H1",
+) -> Path:
+    gate = path / ".rsi" / "gates" / "gate-test.json"
+    write_json(
+        gate,
+        {
+            "decision": decision,
+            "baseline_harness": baseline_harness,
+            "candidate_harness": candidate_harness,
+            "baseline_run": "baseline",
+            "candidate_run": "candidate",
+            "benchmark": "synthetic",
+            "split": "heldout",
+            "pass_rate_delta": 0.1,
+        },
+    )
+    return gate
