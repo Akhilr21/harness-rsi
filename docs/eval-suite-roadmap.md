@@ -72,6 +72,13 @@ Promotion must never consume heldout or regression traces as proposal input. If 
 task moves between splits, the change-management entry should record the reason,
 the affected suite version, and the gates that need to be rerun.
 
+CM-0016 makes this an audited information-flow invariant. Proposal generation
+rejects validation split runs, writes a normalized evidence manifest, and cycle
+summaries point to a split-isolation audit that recursively scans proposals for
+heldout/regression task IDs, run IDs, trace paths, run paths, and gate paths.
+Composite gates carry the audit digest, and promotion requires the audit to be
+present, passing, and untampered.
+
 The split contract is more important than the exact task count early on. A small
 suite with clean separation is better evidence than a larger suite that leaks
 validation examples into proposal generation.
@@ -280,6 +287,8 @@ world-model trace families into required coverage.
 CM-0014 added a waiver lifecycle report grouped by owner and review date without
 changing promotion semantics.
 CM-0015 added composite-gate and promotion-boundary digest checks.
+CM-0016 added train-only proposal evidence manifests and split-isolation audit
+gates.
 
 The next increment should target:
 
@@ -287,9 +296,7 @@ The next increment should target:
    duration, tool calls, and cost.
 2. Decide whether overdue waiver lifecycle states should become a future gate
    policy or stay audit-only.
-3. Add a stricter split-isolation audit for proposal evidence versus heldout and
-   regression evidence.
-4. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
+3. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
-5. Keep live simulator or world-model adapters behind stable local trace
+4. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.

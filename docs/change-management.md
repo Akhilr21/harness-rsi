@@ -589,3 +589,48 @@ pressures explicit before a candidate can be promoted.
 - Remediation: next decide when efficiency metrics are reliable enough for gate
   semantics, then add a split-isolation audit that proves proposal evidence is
   train-only and does not leak heldout or regression task IDs.
+
+## CM-0016: Split-Isolation Proposal Audit
+
+- Date: 2026-06-19
+- Files changed: `src/harness_rsi/improve.py`, `src/harness_rsi/cycle.py`,
+  `src/harness_rsi/versions.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: harness-level RSI fails if validation traces leak into proposal
+  generation. The system needs to prove that `train` is the only proposal
+  evidence source and that heldout/regression remain validation-only.
+- Change made: `propose_patch` now rejects source runs whose benchmark metadata
+  split is not `train`. Proposals now include a normalized evidence manifest
+  with source split, run path, task IDs, trace task IDs, task digest, result
+  digest, trace digest, input digest, and prompt digest for non-mock proposals.
+  Experiment cycles now write `.rsi/cycles/<cycle-id>-split-isolation.json`
+  with proposal source checks, embedded evidence checks, train/validation task
+  ID disjointness, trace task ID checks, recursive validation-reference scanning,
+  and a split-isolation digest. Composite gates carry that audit path and digest,
+  and promotion rejects missing, failing, or mutated split-isolation evidence.
+- Gate enforcement: promotion semantics changed. Benchmark-grade promotion now
+  requires a passing split-isolation audit in addition to heldout/regression
+  composite gate evidence.
+- Frontier/world-model note: this is especially important for frontier and
+  Decart/Oasis-style world-model work because validation rollouts contain rich
+  state traces that are tempting to reuse as proposal context. A stronger model
+  can appear to improve after seeing a leaked validation rollout while the
+  harness has not learned a generalizable improvement.
+- Validation run: `pytest` reported 71 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` in `/private/tmp`
+  and ran `experiment cycle --parent H0 --candidate H1 --benchmark sim-v0
+  --mock --min-heldout-delta 0 --max-regression-drop 0 --no-promote`, writing a
+  passing split-isolation audit with zero leaked validation references. The
+  composite gate carried the split-isolation audit path and digest, and the
+  rejection artifact preserved the same audit reference.
+- Observation: prior artifacts identified the train source run, but that was a
+  metadata claim, not an information-flow proof. Non-mock proposal generation
+  also sent raw trace text to the model without recording a normalized manifest
+  of model-visible evidence.
+- Learning: split isolation is not just a split label. It is a boundary over
+  results, traces, task IDs, run IDs, run paths, prompt context, and recursive
+  proposal payloads.
+- Remediation: next decide whether efficiency metrics are reliable enough to
+  become gate inputs, and separately decide whether overdue waiver lifecycle
+  states should remain audit-only or become promotion policy.

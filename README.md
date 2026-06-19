@@ -155,6 +155,12 @@ The split contract stays strict:
 - `regression` protects behavior that previous candidates or reviews already
   taught us to care about.
 
+Proposal generation now rejects heldout/regression source runs. Experiment
+cycles also write `.rsi/cycles/<cycle-id>-split-isolation.json`, which records
+the train source run, proposal evidence task IDs, validation task IDs, leaked
+validation-reference scan results, and a split-isolation digest. Composite gates
+carry that audit digest, and promotion requires a passing, untampered audit.
+
 Gates now support aggregate pass-rate thresholds, regression-drop tolerance, and
 per-environment maximum drops. The roadmap is to add failure-family coverage and
 eventually efficiency thresholds for attempts, tool calls, duration, and cost.

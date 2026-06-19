@@ -101,6 +101,8 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
             "pass_rate_delta": gate.get("pass_rate_delta"),
             "heldout_gate": gate.get("heldout_gate"),
             "regression_gate": gate.get("regression_gate"),
+            "split_isolation_audit": gate.get("split_isolation_audit"),
+            "split_isolation_digest": gate.get("split_isolation_digest"),
             "heldout_gate_digest": gate.get("heldout_gate_digest"),
             "regression_gate_digest": gate.get("regression_gate_digest"),
             "heldout_baseline_run": gate.get("heldout_baseline_run"),
@@ -129,6 +131,8 @@ def validate_promotion_gate_contract(gate: dict[str, Any]) -> None:
     required_fields = [
         "heldout_gate",
         "regression_gate",
+        "split_isolation_audit",
+        "split_isolation_digest",
         "heldout_gate_digest",
         "regression_gate_digest",
         "heldout_baseline_run",
@@ -146,9 +150,24 @@ def validate_promotion_gate_contract(gate: dict[str, Any]) -> None:
         )
     if gate.get("heldout_decision") != "promote" or gate.get("regression_decision") != "promote":
         raise RuntimeError("Composite promotion gate requires heldout and regression promotion.")
+    validate_split_isolation_audit(gate)
     validate_child_gate_digest(gate, "heldout_gate", "heldout_gate_digest")
     validate_child_gate_digest(gate, "regression_gate", "regression_gate_digest")
     validate_promotion_coverage_current(gate)
+
+
+def validate_split_isolation_audit(gate: dict[str, Any]) -> None:
+    audit_path = Path(str(gate["split_isolation_audit"]))
+    if not audit_path.exists():
+        raise RuntimeError(f"Composite promotion gate split isolation audit not found: {audit_path}.")
+    audit = read_json(audit_path)
+    if audit.get("status") != "pass":
+        raise RuntimeError("Composite promotion gate requires a passing split isolation audit.")
+    current_digest = digest_payload(
+        {key: value for key, value in audit.items() if key != "split_isolation_digest"}
+    )
+    if current_digest != gate["split_isolation_digest"]:
+        raise RuntimeError("Composite promotion gate split isolation audit digest mismatch.")
 
 
 def validate_child_gate_digest(gate: dict[str, Any], path_field: str, digest_field: str) -> None:

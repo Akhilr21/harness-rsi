@@ -6,9 +6,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from harness_rsi.benchmarks import compare_runs, evaluator_digest, gate_candidate
+import harness_rsi.improve as improve_module
+from harness_rsi.benchmarks import compare_runs, digest_payload, evaluator_digest, gate_candidate
 from harness_rsi.cli import main
-from harness_rsi.cycle import run_experiment_cycle, write_composite_gate
+from harness_rsi.cycle import (
+    run_experiment_cycle,
+    write_composite_gate,
+    write_split_isolation_audit,
+)
 from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, read_jsonl, write_json
 from harness_rsi.versions import (
@@ -328,6 +333,20 @@ def test_benchmark_waivers_command_rejects_bad_as_of_date(
         )
         output = capsys.readouterr()
         assert "YYYY-MM-DD" in output.err
+
+
+def test_improve_rejects_validation_split_source_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["init"]) == 0
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        heldout_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        assert main(["improve", "--run", str(heldout_run), "--mock"]) == 1
+        output = capsys.readouterr()
+        assert "requires a train split run" in output.err
 
 
 def test_sim_v0_gate_passes_with_waived_missing_coverage(tmp_path: Path) -> None:
@@ -1025,6 +1044,49 @@ def test_promote_candidate_version_rejects_mutated_child_gate(tmp_path: Path) ->
             raise AssertionError("Expected mutated child gate rejection.")
 
 
+def test_promote_candidate_version_rejects_missing_split_isolation_audit(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+        )
+        composite = read_json(gate)
+        Path(composite["split_isolation_audit"]).unlink()
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "split isolation audit not found" in str(error)
+        else:
+            raise AssertionError("Expected missing split isolation audit rejection.")
+
+
+def test_promote_candidate_version_rejects_failing_split_isolation_audit(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+        )
+        composite = read_json(gate)
+        audit_path = Path(composite["split_isolation_audit"])
+        audit = read_json(audit_path)
+        audit["status"] = "fail"
+        write_json(audit_path, audit)
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "requires a passing split isolation audit" in str(error)
+        else:
+            raise AssertionError("Expected failing split isolation audit rejection.")
+
+
 def test_harness_list_flags_filename_id_mismatch(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init"]) == 0
@@ -1058,6 +1120,7 @@ def test_experiment_cycle_promotes_candidate_with_composite_gate(tmp_path: Path)
             "create_candidate",
             "heldout_gate",
             "regression_gate",
+            "split_isolation_audit",
             "composite_gate",
         }
         config = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
@@ -1069,6 +1132,11 @@ def test_experiment_cycle_promotes_candidate_with_composite_gate(tmp_path: Path)
         assert config["lineage"]["split"] == "heldout+regression"
         proposal = read_json(Path(next(step["proposal"] for step in cycle["steps"] if step["name"] == "propose_patch")))
         assert proposal["evidence"]["metadata"]["split"] == "train"
+        assert proposal["source_split"] == "train"
+        assert proposal["evidence_manifest"]["source_split"] == "train"
+        assert proposal["evidence_manifest"]["task_ids"] == run_task_ids(
+            Path(next(step["run"] for step in cycle["steps"] if step["name"] == "train_parent"))
+        )
 
 
 def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
@@ -1091,6 +1159,8 @@ def test_experiment_cycle_no_promote_keeps_candidate(tmp_path: Path) -> None:
         decision = read_json(Path(cycle["decision_artifact"]))
         assert decision["decision"] == "reject"
         assert decision["proposal"]
+        assert decision["split_isolation_audit"]
+        assert decision["split_isolation_digest"]
         assert decision["heldout_gate"]
         assert decision["regression_gate"]
         assert "heldout_pass_rate_delta" in decision["score_deltas"]
@@ -1117,11 +1187,29 @@ def test_experiment_cycle_records_suite_identity_for_sim_v0(tmp_path: Path) -> N
         )
         cycle = read_json(cycle_path)
         composite_step = next(step for step in cycle["steps"] if step["name"] == "composite_gate")
+        split_audit_step = next(
+            step for step in cycle["steps"] if step["name"] == "split_isolation_audit"
+        )
         composite = read_json(Path(composite_step["gate"]))
+        split_audit = read_json(Path(split_audit_step["audit"]))
         decision = read_json(Path(cycle["decision_artifact"]))
         assert cycle["suite_version"] == "sim-v0.1"
         assert cycle["suite_digest"] == manifest["suite_digest"]
         assert cycle["coverage_digest"] == coverage["coverage_digest"]
+        assert split_audit_step["status"] == "pass"
+        assert split_audit["status"] == "pass"
+        assert split_audit["proposal_source_split"] == "train"
+        assert split_audit["proposal_embedded_evidence_present"] is True
+        assert split_audit["proposal_embedded_task_ids"] == split_audit["train"]["task_ids"]
+        assert set(split_audit["train"]["task_ids"]).isdisjoint(
+            split_audit["validation"]["heldout"]["task_ids"]
+        )
+        assert set(split_audit["train"]["task_ids"]).isdisjoint(
+            split_audit["validation"]["regression"]["task_ids"]
+        )
+        assert {check["passed"] for check in split_audit["checks"]} == {True}
+        assert split_audit["violations"] == []
+        assert split_audit["split_isolation_digest"]
         assert composite["suite_digest"] == manifest["suite_digest"]
         assert composite["coverage_digest"] == coverage["coverage_digest"]
         assert composite["heldout_evaluator_digests"]
@@ -1129,6 +1217,105 @@ def test_experiment_cycle_records_suite_identity_for_sim_v0(tmp_path: Path) -> N
         assert decision["suite_digest"] == manifest["suite_digest"]
         assert decision["evaluator_digests"]["heldout"]
         assert decision["evaluator_digests"]["regression"]
+
+
+def test_split_isolation_audit_rejects_embedded_heldout_evidence(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "train", "--mock"]) == 0
+        train_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        heldout_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        assert (
+            main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "regression", "--mock"])
+            == 0
+        )
+        regression_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        proposal = tmp_path / ".rsi" / "proposals" / "leaky-proposal.json"
+        write_json(
+            proposal,
+            {
+                "id": "leaky-proposal",
+                "source_run": train_run.name,
+                "status": "proposed",
+                "config_patch": {"prompt_append": "Leaked validation evidence."},
+                "learning": f"Leaked validation trace at {heldout_run}/trace.jsonl.",
+                "evidence": read_json(heldout_run / "results.json"),
+            },
+        )
+
+        try:
+            write_split_isolation_audit(
+                cycle_id="cycle-leaky",
+                proposal_path=proposal,
+                train_run=train_run,
+                heldout_parent_run=heldout_run,
+                heldout_candidate_run=heldout_run,
+                regression_parent_run=regression_run,
+                regression_candidate_run=regression_run,
+            )
+        except RuntimeError as error:
+            assert "Split isolation audit failed" in str(error)
+        else:
+            raise AssertionError("Expected split isolation audit failure.")
+
+        audit = read_json(tmp_path / ".rsi" / "cycles" / "cycle-leaky-split-isolation.json")
+        assert audit["status"] == "fail"
+        failed_checks = {check["name"] for check in audit["violations"]}
+        assert "proposal_embedded_evidence_is_train" in failed_checks
+        assert "proposal_embedded_task_ids_subset_of_train" in failed_checks
+        assert "proposal_has_no_validation_references" in failed_checks
+        assert f"{heldout_run}/trace.jsonl" in audit["leaked_validation_references"]
+
+
+def test_non_mock_proposal_prompt_uses_only_train_trace(tmp_path: Path, monkeypatch) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "train", "--mock"]) == 0
+        train_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        heldout_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        assert (
+            main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "regression", "--mock"])
+            == 0
+        )
+        regression_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-1]
+        captured: dict[str, str] = {}
+
+        def fake_call_model(*, model: str, prompt: str, reasoning_effort: str) -> str:
+            captured["prompt"] = prompt
+            return json.dumps(
+                {
+                    "summary": "Train-only prompt audit proposal.",
+                    "learning": "Use only training evidence for proposal generation.",
+                    "config_patch": {"prompt_append": "Respect split isolation."},
+                    "risks": [],
+                    "expected_metric": "pass_rate",
+                }
+            )
+
+        monkeypatch.setattr(improve_module, "call_model", fake_call_model)
+        proposal = improve_module.propose_patch(
+            run_dir=train_run,
+            model=None,
+            reasoning_effort="medium",
+            mock=False,
+            config_path=Path(".rsi/harnesses/H0.json"),
+        )
+        prompt = captured["prompt"]
+        proposal_payload = read_json(proposal)
+        assert proposal_payload["source_run"] == train_run.name
+        assert proposal_payload["source_split"] == "train"
+        assert proposal_payload["evidence_manifest"]["source_split"] == "train"
+        assert proposal_payload["evidence_manifest"]["prompt_digest"]
+        assert proposal_payload["evidence_manifest"]["task_ids"] == run_task_ids(train_run)
+        assert "'split': 'train'" in prompt
+        assert set(run_task_ids(train_run)).isdisjoint(run_task_ids(heldout_run))
+        assert set(run_task_ids(train_run)).isdisjoint(run_task_ids(regression_run))
+        for task_id in run_task_ids(train_run):
+            assert task_id in prompt
+        for task_id in [*run_task_ids(heldout_run), *run_task_ids(regression_run)]:
+            assert task_id not in prompt
 
 
 def test_write_composite_gate_rejects_wrong_split_roles(tmp_path: Path) -> None:
@@ -1414,6 +1601,11 @@ def assert_environment_rollup_reconciles(results: dict[str, object]) -> None:
     assert sum(item["tool_calls"] for item in per_environment.values()) == results["tool_calls"]
 
 
+def run_task_ids(run_dir: Path) -> list[str]:
+    results = read_json(run_dir / "results.json")
+    return [str(item["task_id"]) for item in results["results"]]
+
+
 def write_proposal(path: Path) -> Path:
     proposal = path / ".rsi" / "proposals" / "proposal-test.json"
     write_json(
@@ -1502,8 +1694,22 @@ def write_promote_composite_gate(
         current_coverage_digest=current_coverage_digest,
         coverage_policy_digest=coverage_policy_digest,
     )
+    split_audit = write_fake_split_isolation_audit(path)
     return write_composite_gate(
         heldout_gate=heldout,
         regression_gate=regression,
+        split_isolation_audit=split_audit,
         decision="promote",
     )
+
+
+def write_fake_split_isolation_audit(path: Path) -> Path:
+    audit_path = path / ".rsi" / "cycles" / "fake-split-isolation.json"
+    audit = {
+        "status": "pass",
+        "checks": [],
+        "violations": [],
+    }
+    audit["split_isolation_digest"] = digest_payload(audit)
+    write_json(audit_path, audit)
+    return audit_path

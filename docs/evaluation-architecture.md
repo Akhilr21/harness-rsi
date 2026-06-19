@@ -97,6 +97,15 @@ example, a `tool_use` regression should not be moved into `train` merely because
 it is useful proposal evidence; it should be copied or distilled into a train
 probe while the protected regression case remains protected.
 
+Proposal evidence is train-only. For the improvement step, `results.json`,
+`trace.jsonl`, task IDs, run IDs, run paths, and model prompt context must come
+from a train run. Heldout and regression artifacts may appear in gates,
+composite decisions, rejection artifacts, and promoted lineage, but they must
+not appear in proposal generation. The cycle writes a split-isolation audit that
+records the proposal source run, embedded proposal evidence, train task IDs,
+heldout/regression validation task IDs, recursive validation-reference scan
+results, and a digest of that audit.
+
 ## Failure-Family Coverage Reporting
 
 `sim-v0` task rows carry `environment` and `family` labels, and benchmark
@@ -214,7 +223,9 @@ harness, candidate behavior digest, benchmark, model, suite version, suite
 digest, coverage digest, current coverage digest, and coverage-policy digest. A
 composite `promote` decision requires both component gates to promote. The
 composite artifact records canonical child-gate digests so promotion can re-read
-the child gate files and reject missing or mutated evidence.
+the child gate files and reject missing or mutated evidence. Composite gates
+also carry the split-isolation audit digest; promotion rejects missing, failing,
+or mutated split-isolation evidence.
 
 ## Version-Aware Promotion
 
@@ -252,6 +263,7 @@ Promotion rejects:
 - missing or mismatched candidate behavior digests
 - missing or mutated child gate evidence
 - stale coverage digest evidence at promotion time
+- missing, failing, or mutated split-isolation audit evidence
 
 This keeps harness-level RSI legible: each new harness version is a reviewable
 artifact with its own evidence trail.
