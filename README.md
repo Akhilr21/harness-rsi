@@ -50,6 +50,39 @@ harness-rsi promote .rsi/proposals/<proposal-id>.json
 harness-rsi reject .rsi/proposals/<proposal-id>.json --reason "overfit to toy task"
 ```
 
+## Benchmark quickstart
+
+Create the first synthetic benchmark environment and baseline harness:
+
+```bash
+harness-rsi benchmark init
+```
+
+Run `H0` on heldout, then run a candidate `H1` after creating or copying a
+harness config into `.rsi/harnesses/H1.json`:
+
+```bash
+harness-rsi benchmark run --split heldout --harness H0 --mock
+harness-rsi benchmark run --split heldout --harness H1 --mock
+```
+
+Compare and gate the runs:
+
+```bash
+harness-rsi benchmark compare \
+  --baseline-run .rsi/runs/<h0-run> \
+  --candidate-run .rsi/runs/<h1-run>
+
+harness-rsi benchmark gate \
+  --baseline-run .rsi/runs/<h0-run> \
+  --candidate-run .rsi/runs/<h1-run> \
+  --min-pass-rate-delta 0.01 \
+  --max-allowed-drop 0
+```
+
+The benchmark layer enforces fixed-model comparison, matching task order, and
+matching task/evaluator definitions.
+
 ## Real model runs
 
 Set an API key and omit `--mock`:
@@ -70,11 +103,14 @@ overrideable so experiments can pin a model explicitly.
 ```text
 .rsi/
   harness.json          # model, prompt, tools, retry policy
+  harnesses/H0.json     # versioned baseline harness
+  benchmarks/synthetic/ # train, heldout, regression splits
   tasks/sample.jsonl    # small task input suite
   memory/learnings.md   # promoted learnings the harness reads
   runs/                 # trace + eval artifacts
   proposals/            # candidate harness patches
   decisions/            # promotion/rejection records
+  gates/                # benchmark promotion gate decisions
 ```
 
 ## What each piece means
@@ -104,3 +140,8 @@ The raw tool protocol is intentionally primitive. If shell access is enabled in
 The harness checks `tools.shell`, `tools.allowed_commands`, and
 `tools.timeout_seconds`, writes the observation to the trace, and gives the
 observation back to the model on the next attempt.
+
+## Design docs
+
+- `docs/evaluation-architecture.md`
+- `docs/change-management.md`

@@ -4,10 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
+from harness_rsi.benchmarks import compare_runs, gate_candidate, init_benchmark, run_benchmark
 from harness_rsi.decisions import promote, reject
 from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.improve import latest_run, propose_patch
-from harness_rsi.io import write_json
+from harness_rsi.io import read_json, write_json
 from harness_rsi.paths import HARNESS, LEARNINGS, ROOT, RUNS, TASKS, ensure_dirs
 
 
@@ -66,6 +67,51 @@ def reject_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_init(args: argparse.Namespace) -> int:
+    path = init_benchmark(args.name)
+    print(f"Initialized benchmark at {path}")
+    return 0
+
+
+def benchmark_run(args: argparse.Namespace) -> int:
+    result = run_benchmark(
+        benchmark=args.benchmark,
+        split=args.split,
+        harness=args.harness,
+        model=args.model,
+        mock=args.mock,
+    )
+    print(
+        "Wrote benchmark run artifacts to "
+        f"{result.run_dir} ({result.benchmark}/{result.split}/{result.harness})"
+    )
+    return 0
+
+
+def benchmark_compare(args: argparse.Namespace) -> int:
+    comparison = compare_runs(Path(args.baseline_run), Path(args.candidate_run))
+    print(readable_json(comparison))
+    return 0
+
+
+def benchmark_gate(args: argparse.Namespace) -> int:
+    path = gate_candidate(
+        baseline_run=Path(args.baseline_run),
+        candidate_run=Path(args.candidate_run),
+        min_pass_rate_delta=args.min_pass_rate_delta,
+        max_allowed_drop=args.max_allowed_drop,
+    )
+    print(f"Wrote gate decision to {path}")
+    print(readable_json(read_json(path)))
+    return 0
+
+
+def readable_json(payload: object) -> str:
+    import json
+
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="harness-rsi")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -96,6 +142,33 @@ def build_parser() -> argparse.ArgumentParser:
     reject_parser.add_argument("proposal")
     reject_parser.add_argument("--reason", required=True)
     reject_parser.set_defaults(func=reject_cmd)
+
+    benchmark = sub.add_parser("benchmark", help="Manage benchmark environments and gates.")
+    benchmark_sub = benchmark.add_subparsers(dest="benchmark_command", required=True)
+
+    benchmark_init_parser = benchmark_sub.add_parser("init", help="Create synthetic benchmark splits.")
+    benchmark_init_parser.add_argument("--name", default="synthetic")
+    benchmark_init_parser.set_defaults(func=benchmark_init)
+
+    benchmark_run_parser = benchmark_sub.add_parser("run", help="Run one benchmark split.")
+    benchmark_run_parser.add_argument("--benchmark", default="synthetic")
+    benchmark_run_parser.add_argument("--split", choices=["train", "heldout", "regression"], required=True)
+    benchmark_run_parser.add_argument("--harness", default="H0")
+    benchmark_run_parser.add_argument("--model")
+    benchmark_run_parser.add_argument("--mock", action="store_true")
+    benchmark_run_parser.set_defaults(func=benchmark_run)
+
+    benchmark_compare_parser = benchmark_sub.add_parser("compare", help="Compare two run directories.")
+    benchmark_compare_parser.add_argument("--baseline-run", required=True)
+    benchmark_compare_parser.add_argument("--candidate-run", required=True)
+    benchmark_compare_parser.set_defaults(func=benchmark_compare)
+
+    benchmark_gate_parser = benchmark_sub.add_parser("gate", help="Write a promotion gate decision.")
+    benchmark_gate_parser.add_argument("--baseline-run", required=True)
+    benchmark_gate_parser.add_argument("--candidate-run", required=True)
+    benchmark_gate_parser.add_argument("--min-pass-rate-delta", type=float, default=0.0)
+    benchmark_gate_parser.add_argument("--max-allowed-drop", type=float, default=0.0)
+    benchmark_gate_parser.set_defaults(func=benchmark_gate)
 
     return parser
 
