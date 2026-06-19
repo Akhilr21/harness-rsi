@@ -170,6 +170,23 @@ checks that Terminal-Bench, SWE-bench, and tau-style task rows preserve source
 IDs, fixture versions, source URLs, local split mapping, evaluator digests, and
 `mode: read_only` without changing gate policy or promotion semantics.
 
+Frozen local exports can also be compiled into a source profile before
+materialization:
+
+```bash
+harness-rsi benchmark import-adapters \
+  --source /path/to/frozen-export.json \
+  --profile frozen-adapters-v0
+harness-rsi benchmark init --name frozen-adapters-v0
+harness-rsi benchmark adapters --benchmark frozen-adapters-v0
+```
+
+The importer writes `benchmarks/<profile>/import_report.json`, source rows under
+`benchmarks/<profile>/sources/`, and strict local gate/coverage policy defaults.
+It is still read-only fixture plumbing: no terminal execution, Docker grading,
+tau simulator, run artifact, gate artifact, or promotion decision is created by
+the importer itself.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic

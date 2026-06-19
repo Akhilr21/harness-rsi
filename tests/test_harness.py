@@ -233,6 +233,267 @@ def test_benchmark_adapters_reads_materialized_copy_only(tmp_path: Path) -> None
         assert report["external_adapter_task_count"] == 3
 
 
+def test_benchmark_import_adapters_writes_source_profile_and_materializes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "frozen-adapter-export.json"
+        write_frozen_adapter_export(export)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "frozen-adapters-v0",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Wrote imported adapter profile to" in output
+        assert "Task count: 3" in output
+        assert "Gate semantics changed: False" in output
+        source_profile = tmp_path / "benchmarks" / "frozen-adapters-v0"
+        import_report = read_json(source_profile / "import_report.json")
+        assert import_report["status"] == "pass"
+        assert import_report["read_only"] is True
+        assert import_report["gate_semantics_changed"] is False
+        assert import_report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        assert import_report["kind_counts"] == {
+            "swe_patch": 1,
+            "terminal": 1,
+            "tool_agent_user": 1,
+        }
+        assert import_report["adapter_counts"] == {
+            "swe-bench": 1,
+            "tau2-bench": 1,
+            "terminal-bench": 1,
+        }
+        assert import_report["fixture_versions"] == {
+            "swe-bench": ["swe-frozen-v1"],
+            "tau2-bench": ["tau-frozen-v1"],
+            "terminal-bench": ["terminal-frozen-v1"],
+        }
+        assert import_report["source_export_digest"]
+        assert import_report["import_report_digest"]
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+
+        assert main(["benchmark", "init", "--name", "frozen-adapters-v0"]) == 0
+        materialized = tmp_path / ".rsi" / "benchmarks" / "frozen-adapters-v0"
+        manifest = read_json(materialized / "manifest.json")
+        assert manifest["importer_version"] == "external-adapter-importer-v0.1"
+        assert manifest["source_export_digest"] == import_report["source_export_digest"]
+        assert manifest["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        heldout = read_jsonl(materialized / "heldout.jsonl")
+        assert heldout[0]["external_adapter"] == {
+            "external_id": "swe-issue-1",
+            "fixture_version": "swe-frozen-v1",
+            "kind": "swe_patch",
+            "mode": "read_only",
+            "name": "swe-bench",
+            "source_url": "https://www.swebench.com/SWE-bench/",
+        }
+        assert heldout[0]["evaluator_digest"] == evaluator_digest(heldout[0]["eval"])
+        coverage = read_json(materialized / "coverage.json")
+        assert coverage["coverage_policy"]["fail_on_missing_required"] is True
+        assert not coverage["missing_required_cells"]
+
+        assert main(["benchmark", "adapters", "--benchmark", "frozen-adapters-v0"]) == 0
+        adapter_report = read_json(materialized / "adapter_report.json")
+        assert adapter_report["status"] == "pass"
+        assert adapter_report["external_adapter_task_count"] == 3
+        assert adapter_report["gate_semantics_changed"] is False
+
+
+def test_benchmark_import_adapters_rejects_missing_required_split(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "missing-regression.json"
+        write_frozen_adapter_export(
+            export,
+            rows=[
+                frozen_adapter_row("tb-train", "train", "terminal-bench", "terminal-1"),
+                frozen_adapter_row("swe-heldout", "heldout", "swe-bench", "swe-1"),
+            ],
+        )
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "missing-regression",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "missing required split" in output.err
+        assert not (tmp_path / "benchmarks" / "missing-regression").exists()
+
+
+def test_benchmark_import_adapters_rejects_live_mode(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "live-mode.json"
+        rows = frozen_adapter_rows()
+        rows[0]["mode"] = "runner"
+        write_frozen_adapter_export(export, rows=rows)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "live-mode",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "mode: read_only" in output.err
+        assert not (tmp_path / "benchmarks" / "live-mode").exists()
+
+
+def test_benchmark_import_adapters_rejects_duplicate_external_ids(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "duplicate-external-id.json"
+        rows = frozen_adapter_rows()
+        rows[1]["external_id"] = rows[0]["external_id"]
+        rows[1]["benchmark"] = rows[0]["benchmark"]
+        write_frozen_adapter_export(export, rows=rows)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "duplicate-external-id",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "Duplicate imported external id" in output.err
+        assert not (tmp_path / "benchmarks" / "duplicate-external-id").exists()
+
+
+def test_benchmark_import_adapters_requires_force_for_existing_profile(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "frozen-adapter-export.json"
+        write_frozen_adapter_export(export)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "force-adapters",
+                ]
+            )
+            == 0
+        )
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "force-adapters",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "already exists" in output.err
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "force-adapters",
+                    "--force",
+                ]
+            )
+            == 0
+        )
+
+
+def test_benchmark_import_adapters_accepts_top_level_json_list(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "frozen-list-export.json"
+        export.write_text(json.dumps(frozen_adapter_rows(), sort_keys=True) + "\n")
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "list-export",
+                ]
+            )
+            == 0
+        )
+        report = read_json(tmp_path / "benchmarks" / "list-export" / "import_report.json")
+        assert report["status"] == "pass"
+        assert report["task_count"] == 3
+
+
+def test_benchmark_import_adapters_rejects_unsafe_profile_path(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "frozen-adapter-export.json"
+        write_frozen_adapter_export(export)
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "../escape",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "Invalid benchmark source profile name" in output.err
+        assert not (tmp_path / "escape").exists()
+
+
 def test_benchmark_coverage_command_writes_report(tmp_path: Path, capsys) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
@@ -2498,6 +2759,65 @@ def write_adapter_source_profile(
         split_dir = path / "sources" / split
         split_dir.mkdir(parents=True, exist_ok=True)
         (split_dir / "tasks.jsonl").write_text(json.dumps(row, sort_keys=True) + "\n")
+
+
+def write_frozen_adapter_export(
+    path: Path,
+    *,
+    rows: list[dict[str, object]] | None = None,
+) -> None:
+    payload = {
+        "suite_version": "frozen-adapters-v0.1",
+        "adapter_contract_version": "adapter-contract-v0.1",
+        "tasks": rows or frozen_adapter_rows(),
+    }
+    write_json(path, payload)
+
+
+def frozen_adapter_rows() -> list[dict[str, object]]:
+    return [
+        frozen_adapter_row(
+            "tb-train",
+            "train",
+            "terminal-bench",
+            "tb-task-1",
+            fixture_version="terminal-frozen-v1",
+        ),
+        frozen_adapter_row(
+            "swe-heldout",
+            "heldout",
+            "swe-bench",
+            "swe-issue-1",
+            fixture_version="swe-frozen-v1",
+        ),
+        frozen_adapter_row(
+            "tau-regression",
+            "regression",
+            "tau2-bench",
+            "tau-dialog-1",
+            fixture_version="tau-frozen-v1",
+        ),
+    ]
+
+
+def frozen_adapter_row(
+    task_id: str,
+    split: str,
+    adapter_name: str,
+    external_id: str,
+    *,
+    fixture_version: str = "frozen-v1",
+) -> dict[str, object]:
+    expected = f"{adapter_name} {external_id}"
+    return {
+        "id": task_id,
+        "split": split,
+        "benchmark": adapter_name,
+        "external_id": external_id,
+        "fixture_version": fixture_version,
+        "instruction": f"Return exactly {expected}.",
+        "expected": expected,
+    }
 
 
 def write_fake_environment_run(

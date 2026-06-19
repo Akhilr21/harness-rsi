@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from harness_rsi.adapter_importers import import_external_adapter_profile
 from harness_rsi.benchmarks import (
     compare_runs,
     gate_candidate,
@@ -150,6 +151,19 @@ def benchmark_adapters(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_import_adapters(args: argparse.Namespace) -> int:
+    path = import_external_adapter_profile(
+        source=Path(args.source),
+        profile=args.profile,
+        suite_version=args.suite_version,
+        force=args.force,
+    )
+    report = read_json(path / "import_report.json")
+    print(f"Wrote imported adapter profile to {path}")
+    print(readable_import_summary(report))
+    return 0
+
+
 def harness_create_candidate(args: argparse.Namespace) -> int:
     path = create_candidate_version(
         parent=args.parent,
@@ -267,6 +281,21 @@ def readable_adapter_summary(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def readable_import_summary(report: dict[str, object]) -> str:
+    lines = [
+        f"Profile: {report.get('profile')}",
+        f"Suite version: {report.get('suite_version')}",
+        f"Status: {report.get('status')}",
+        f"Read only: {report.get('read_only')}",
+        f"Task count: {report.get('task_count')}",
+        f"Splits: {readable_split_counts(report.get('split_counts', {}))}",
+        f"Adapters: {readable_status_counts_for_dict(report.get('adapter_counts', {}))}",
+        f"Gate semantics changed: {report.get('gate_semantics_changed')}",
+        f"Import report digest: {report.get('import_report_digest')}",
+    ]
+    return "\n".join(lines)
+
+
 def readable_status_counts(value: object) -> str:
     if not isinstance(value, dict):
         return "unavailable"
@@ -286,6 +315,12 @@ def readable_adapter_counts(value: object) -> str:
     if not isinstance(value, dict) or not value:
         return "none"
     return ", ".join(f"{name}={value[name]['task_count']}" for name in sorted(value))
+
+
+def readable_status_counts_for_dict(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    return ", ".join(f"{name}={value[name]}" for name in sorted(value))
 
 
 def readable_split_counts(value: object) -> str:
@@ -391,6 +426,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_adapters_parser.add_argument("--benchmark", default="synthetic")
     benchmark_adapters_parser.set_defaults(func=benchmark_adapters)
+
+    benchmark_import_adapters_parser = benchmark_sub.add_parser(
+        "import-adapters",
+        help="Compile frozen local external-adapter exports into a source profile.",
+    )
+    benchmark_import_adapters_parser.add_argument("--source", required=True)
+    benchmark_import_adapters_parser.add_argument("--profile", required=True)
+    benchmark_import_adapters_parser.add_argument("--suite-version")
+    benchmark_import_adapters_parser.add_argument("--force", action="store_true")
+    benchmark_import_adapters_parser.set_defaults(func=benchmark_import_adapters)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")
     harness_sub = harness.add_subparsers(dest="harness_command", required=True)

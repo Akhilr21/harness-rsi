@@ -862,3 +862,59 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   Terminal-Bench, SWE-bench, and tau/tau3-style datasets into this metadata
   contract. Any adapter that needs new scoring, tool execution, Docker, or live
   simulator semantics must get its own CM entry and gate-policy review.
+
+## CM-0021: Frozen Local External-Adapter Importers
+
+- Date: 2026-06-19
+- Files changed: `src/harness_rsi/adapter_importers.py`,
+  `src/harness_rsi/cli.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: after CM-0020 metadata parity, the next useful external-benchmark
+  increment is a frozen local import path, not a live runner. Terminal-Bench,
+  SWE-bench, and tau/tau3-style exports should be able to become local source
+  profiles only when they preserve split identity, fixture version, external
+  task identity, deterministic evaluator identity, and read-only adapter mode.
+- Change made: added `benchmark import-adapters --source <path> --profile
+  <name>` to compile frozen JSON/JSONL exports into
+  `benchmarks/<profile>/sources/{train,heldout,regression}`. The importer writes
+  `manifest.json`, strict local `gate_policy.json`, and `import_report.json`
+  with source export digest, importer version, adapter counts, kind counts,
+  split counts, fixture versions, metadata failures, and an import digest. It
+  fails closed for missing train/heldout/regression splits, live or runner
+  modes, unsupported adapter kinds, duplicate external fixture IDs, and missing
+  deterministic evals.
+- Gate enforcement: no promotion semantics changed. Importer reports do not
+  create runs, gates, composite gates, proposal evidence, or promoted harnesses.
+  Imported rows become promotion-relevant only after the existing
+  materialization, run, heldout/regression gate, split-isolation, composite
+  gate, and promotion-time digest path consumes them.
+- Frontier/world-model note: for frontier models, this broadens measurement
+  coverage without changing the fixed-model Hn/Hn+1 claim. For Decart/Oasis
+  world-model use cases, CM-0021 still does not ingest simulator traces, replay
+  interventions, grade rollout video/state, or run a live world-model adapter.
+  Static `world_model_static` probes remain the only world-model pressure in
+  this repo until a separate trace-ingestion contract exists.
+- Validation run: `pytest` reported 100 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused `pytest tests/test_harness.py` reported 83
+  passing tests after importer, materialization, adapter-report, read-only
+  side-effect, missing split, live-mode, duplicate external-id,
+  force-overwrite, top-level JSON list, and unsafe profile-path cases. A CLI
+  smoke imported a frozen local export into
+  `cm0021-smoke`, materialized it, wrote a passing read-only adapter report with
+  3 adapter rows and zero metadata failures, then ran a one-cycle stability
+  smoke from H0 to H1 with zero coverage, environment, efficiency,
+  split-isolation, waiver, heldout, or regression failures.
+- Observation: frozen real exports expose provenance, split, fixture, and
+  evaluator gaps without requiring Docker, terminal execution, or user-simulator
+  plumbing. The importer is where those gaps should fail loudly before the
+  benchmark becomes local evidence.
+- Learning: adapter import is still measurement infrastructure. Even without
+  changing gate semantics, it changes what future gates can measure, so import
+  reports need source digests, fixture versions, and deterministic split
+  coverage just like benchmark reports need suite and coverage digests.
+- Remediation: next add rejected-row reporting and optional split-map review so
+  larger frozen exports can explain why rows were not imported. Then import a
+  tiny real frozen export from one benchmark family and run the complete
+  materialize, adapter-report, and stability-smoke path before any live runner
+  or simulator adapter work.

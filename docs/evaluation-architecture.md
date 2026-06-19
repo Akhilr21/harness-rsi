@@ -109,6 +109,29 @@ versions, source URLs, metadata failures, and a report digest. It does not run
 Docker, terminals, customer-service simulators, or external benchmark harnesses,
 and its digest is not promotion evidence.
 
+CM-0021 adds frozen local importers for this same metadata contract:
+
+```bash
+harness-rsi benchmark import-adapters \
+  --source frozen-export.json \
+  --profile frozen-adapters-v0
+```
+
+The importer accepts local JSON/JSONL exports whose rows identify the adapter
+name, external task ID, fixture version, split, instruction-like text, and a
+deterministic local evaluator. It writes a normal source profile under
+`benchmarks/<profile>/sources/{train,heldout,regression}` plus
+`import_report.json`, `manifest.json`, and `gate_policy.json`.
+
+The import report records source export identity, source digest, importer
+version, split counts, adapter counts, fixture versions, and a digest over the
+report. It is not a run, gate, score, or promotion artifact. The imported rows
+only become measurement evidence after `benchmark init`, `benchmark run`,
+heldout/regression gates, split-isolation audit, composite gate, and
+promotion-time digest checks. Missing splits, duplicate external fixture IDs,
+live/runner modes, unsupported adapter kinds, and missing deterministic evals
+fail before a source profile is written.
+
 ## Splits
 
 Each benchmark environment has three splits:

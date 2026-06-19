@@ -306,12 +306,16 @@ gate contract across promoted or dry-run candidate chains.
 CM-0020 added read-only external adapter metadata reports and an
 `external-adapter-smoke-v0` profile for Terminal-Bench, SWE-bench, and
 tau-style task shapes.
+CM-0021 added read-only importers from frozen local external-adapter exports into
+the CM-0020 metadata contract.
 
 The next increment should target:
 
-1. Add read-only importers from frozen local exports of Terminal-Bench,
-   SWE-bench, and tau/tau3-style datasets into the CM-0020 metadata contract.
-2. Keep live simulator or world-model adapters behind stable local trace
+1. Add rejected-row reporting and optional split-map review for larger frozen
+   exports where not every row can safely become a local fixture.
+2. Import a tiny real frozen export from one benchmark family and run the full
+   materialize, adapter-report, and stability-smoke path.
+3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
-3. Add sanitized real traces only when their source, fixture version, and split
+4. Add sanitized real traces only when their source, fixture version, and split
    contract can be replayed.
