@@ -208,6 +208,14 @@ This prevents an aggregate win from masking a local failure in a protected
 environment. It also prevents a candidate from being promoted against coverage
 metadata that changed after the run evidence was produced.
 
+Composite gates are the promotion boundary. A composite gate can only combine a
+heldout gate and a regression gate for the same baseline harness, candidate
+harness, candidate behavior digest, benchmark, model, suite version, suite
+digest, coverage digest, current coverage digest, and coverage-policy digest. A
+composite `promote` decision requires both component gates to promote. The
+composite artifact records canonical child-gate digests so promotion can re-read
+the child gate files and reject missing or mutated evidence.
+
 ## Version-Aware Promotion
 
 Benchmark promotion uses two phases. First a proposal creates a candidate
@@ -236,11 +244,14 @@ benchmark gate ...
 Promotion rejects:
 
 - rejected gates
+- single-split gates that are not composite heldout+regression decisions
 - parent mismatch
 - candidate ID mismatch
 - existing version overwrite
 - model changes inside `config_patch`
 - missing or mismatched candidate behavior digests
+- missing or mutated child gate evidence
+- stale coverage digest evidence at promotion time
 
 This keeps harness-level RSI legible: each new harness version is a reviewable
 artifact with its own evidence trail.

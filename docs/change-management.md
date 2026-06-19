@@ -541,3 +541,51 @@ pressures explicit before a candidate can be promoted.
 - Remediation: decide whether overdue waiver states should remain audit-only or
   become future gate-policy inputs, then add composite-gate digest-boundary tests
   before external benchmark or live world-model adapters.
+
+## CM-0015: Composite Gate Boundary Hardening
+
+- Date: 2026-06-19
+- Files changed: `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cycle.py`,
+  `src/harness_rsi/versions.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: after suite, coverage, evaluator, and waiver identity are carried
+  through artifacts, the next failure mode is boundary slippage. A candidate
+  should not promote from a single split, from mixed heldout/regression evidence,
+  from child gates that changed after composition, or from coverage metadata that
+  changed after the composite gate was written.
+- Change made: `compare_runs` now rejects baseline/candidate coverage-digest
+  mismatch when both runs carry coverage identity. `write_composite_gate` now
+  validates heldout/regression split roles and requires matching baseline
+  harness, candidate harness, candidate behavior digest, benchmark, model, suite
+  version, suite digest, coverage digest, current coverage digest, and
+  coverage-policy digest. Composite `promote` decisions require both component
+  gates to promote. Composite gates now store canonical child-gate digests, and
+  promotion re-reads those child gate files before mutating a candidate harness.
+  Promotion also rejects non-composite gates and stale coverage digests.
+- Gate enforcement: promotion semantics changed. A single heldout or regression
+  gate is no longer sufficient promotion evidence; benchmark-grade promotion
+  requires a composite heldout+regression gate with current coverage evidence
+  and untampered child gates.
+- Frontier/world-model note: this is important for frontier and
+  world-model-adjacent use cases because stronger models can make aggregate
+  scores look stable even when evidence is mixed across suite versions, coverage
+  policies, or split roles. Live Decart/Oasis-style adapters should not be added
+  until these local digest boundaries are boring.
+- Validation run: `pytest` reported 66 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` in `/private/tmp`
+  and ran `experiment cycle --parent H0 --candidate H1 --benchmark sim-v0
+  --mock --min-heldout-delta 0 --max-regression-drop 0 --no-promote`, writing
+  heldout and regression gates, a `heldout+regression` composite gate, and a
+  rejection artifact. The composite gate carried `heldout_gate_digest`,
+  `regression_gate_digest`, `coverage_digest`, and `coverage_policy_digest`.
+- Observation: the previous implementation had the right artifact vocabulary but
+  still trusted the caller at the composite and promotion boundary. It also let
+  compare evidence carry the candidate coverage digest forward even if the
+  baseline run came from a different coverage contract.
+- Learning: digest fields only matter if boundaries actively compare them. A
+  promotion artifact must be tamper-evident at the child-gate level, not only at
+  the final candidate behavior digest.
+- Remediation: next decide when efficiency metrics are reliable enough for gate
+  semantics, then add a split-isolation audit that proves proposal evidence is
+  train-only and does not leak heldout or regression task IDs.

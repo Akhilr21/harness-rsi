@@ -174,6 +174,10 @@ fail gates; waived and unclassified missing cells remain visible in artifacts
 without blocking promotion by themselves.
 Waived cells carry owner, tracking reference, review date, and expiry-condition
 metadata so intentionally missing evidence stays reviewable.
+Promotion now requires a composite heldout+regression gate. Composite gates fail
+closed when child gates mix split roles, benchmarks, models, suite digests,
+coverage digests, coverage-policy digests, or candidate behavior digests, and
+promotion rechecks child gate digests before mutating a candidate harness.
 The coverage command prints a concise summary and writes the full
 environment/family/split matrix to `.rsi/benchmarks/<name>/coverage.json`.
 The waiver lifecycle command writes

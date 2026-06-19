@@ -350,6 +350,12 @@ def compare_runs(baseline_run: Path, candidate_run: Path) -> dict[str, Any]:
         raise RuntimeError("Cannot compare runs from different splits.")
     if baseline_metadata.get("suite_digest") != candidate_metadata.get("suite_digest"):
         raise RuntimeError("Cannot compare runs from different benchmark suite digests.")
+    if (
+        baseline_metadata.get("coverage_digest")
+        and candidate_metadata.get("coverage_digest")
+        and baseline_metadata.get("coverage_digest") != candidate_metadata.get("coverage_digest")
+    ):
+        raise RuntimeError("Cannot compare runs from different coverage digests.")
     if baseline_task_ids != candidate_task_ids:
         raise RuntimeError("Cannot compare runs with different task IDs or task order.")
     if baseline.get("task_digest") != candidate.get("task_digest"):

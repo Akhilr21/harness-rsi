@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from harness_rsi.benchmarks import harness_path
+from harness_rsi.benchmarks import coverage_gate_evidence, digest_payload, harness_path
 from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, write_json
 
@@ -80,6 +80,7 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
         raise RuntimeError("Gate is missing candidate harness digest.")
     if candidate_digest != harness_behavior_digest(config):
         raise RuntimeError("Gate candidate digest does not match current candidate harness.")
+    validate_promotion_gate_contract(gate)
 
     lineage = deepcopy(config.get("lineage", {}))
     lineage.update(
@@ -92,12 +93,16 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
             "suite_version": gate.get("suite_version"),
             "suite_digest": gate.get("suite_digest"),
             "coverage_digest": gate.get("coverage_digest"),
+            "current_coverage_digest": gate.get("current_coverage_digest"),
+            "coverage_policy_digest": gate.get("coverage_policy_digest"),
             "evaluator_digests": gate.get("evaluator_digests"),
             "heldout_evaluator_digests": gate.get("heldout_evaluator_digests"),
             "regression_evaluator_digests": gate.get("regression_evaluator_digests"),
             "pass_rate_delta": gate.get("pass_rate_delta"),
             "heldout_gate": gate.get("heldout_gate"),
             "regression_gate": gate.get("regression_gate"),
+            "heldout_gate_digest": gate.get("heldout_gate_digest"),
+            "regression_gate_digest": gate.get("regression_gate_digest"),
             "heldout_baseline_run": gate.get("heldout_baseline_run"),
             "heldout_candidate_run": gate.get("heldout_candidate_run"),
             "regression_baseline_run": gate.get("regression_baseline_run"),
@@ -116,6 +121,63 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
     )
     write_json(candidate_path, config)
     return candidate_path
+
+
+def validate_promotion_gate_contract(gate: dict[str, Any]) -> None:
+    if gate.get("split") != "heldout+regression":
+        raise RuntimeError("Promotion requires a composite heldout+regression gate.")
+    required_fields = [
+        "heldout_gate",
+        "regression_gate",
+        "heldout_gate_digest",
+        "regression_gate_digest",
+        "heldout_baseline_run",
+        "heldout_candidate_run",
+        "regression_baseline_run",
+        "regression_candidate_run",
+        "heldout_decision",
+        "regression_decision",
+    ]
+    missing = [field for field in required_fields if not gate.get(field)]
+    if missing:
+        raise RuntimeError(
+            "Composite promotion gate is missing required evidence fields: "
+            f"{', '.join(missing)}."
+        )
+    if gate.get("heldout_decision") != "promote" or gate.get("regression_decision") != "promote":
+        raise RuntimeError("Composite promotion gate requires heldout and regression promotion.")
+    validate_child_gate_digest(gate, "heldout_gate", "heldout_gate_digest")
+    validate_child_gate_digest(gate, "regression_gate", "regression_gate_digest")
+    validate_promotion_coverage_current(gate)
+
+
+def validate_child_gate_digest(gate: dict[str, Any], path_field: str, digest_field: str) -> None:
+    child_path = Path(str(gate[path_field]))
+    if not child_path.exists():
+        raise RuntimeError(f"Composite promotion gate child gate not found: {child_path}.")
+    current_digest = digest_payload(read_json(child_path))
+    if current_digest != gate[digest_field]:
+        raise RuntimeError(
+            f"Composite promotion gate child digest mismatch for {path_field}."
+        )
+
+
+def validate_promotion_coverage_current(gate: dict[str, Any]) -> None:
+    benchmark = gate.get("benchmark")
+    coverage_digest = gate.get("coverage_digest")
+    if not benchmark or not coverage_digest:
+        return
+    evidence = coverage_gate_evidence(
+        str(benchmark),
+        expected_coverage_digest=str(coverage_digest),
+    )
+    coverage_drift = [
+        failure
+        for failure in evidence.get("coverage_failures", [])
+        if failure.get("type") == "coverage_digest_mismatch"
+    ]
+    if coverage_drift:
+        raise RuntimeError("Composite promotion gate coverage digest is stale.")
 
 
 def apply_config_patch(config: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

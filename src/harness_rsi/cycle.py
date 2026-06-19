@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from harness_rsi.benchmarks import gate_candidate, harness_path, run_benchmark
+from harness_rsi.benchmarks import digest_payload, gate_candidate, harness_path, run_benchmark
 from harness_rsi.improve import propose_patch
 from harness_rsi.io import read_json, write_json
 from harness_rsi.paths import CYCLES, DECISIONS
@@ -172,14 +172,7 @@ def run_experiment_cycle(
 def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision: str) -> Path:
     heldout = read_json(heldout_gate)
     regression = read_json(regression_gate)
-    if heldout.get("candidate_harness") != regression.get("candidate_harness"):
-        raise RuntimeError("Cannot compose gates for different candidate harnesses.")
-    if heldout.get("baseline_harness") != regression.get("baseline_harness"):
-        raise RuntimeError("Cannot compose gates for different baseline harnesses.")
-    if heldout.get("candidate_harness_digest") != regression.get("candidate_harness_digest"):
-        raise RuntimeError("Cannot compose gates for different candidate behavior digests.")
-    if heldout.get("suite_digest") != regression.get("suite_digest"):
-        raise RuntimeError("Cannot compose gates for different benchmark suite digests.")
+    validate_composite_gate_inputs(heldout, regression, decision)
     decided_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     path = heldout_gate.parent / f"{heldout['candidate_harness']}-{decided_at}-composite-gate.json"
     write_json(
@@ -193,6 +186,8 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
             "suite_version": heldout.get("suite_version"),
             "suite_digest": heldout.get("suite_digest"),
             "coverage_digest": heldout.get("coverage_digest"),
+            "current_coverage_digest": heldout.get("current_coverage_digest"),
+            "coverage_policy_digest": heldout.get("coverage_policy_digest"),
             "split": "heldout+regression",
             "baseline_run": heldout.get("baseline_run"),
             "candidate_run": heldout.get("candidate_run"),
@@ -202,6 +197,8 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
             "regression_evaluator_digests": regression.get("evaluator_digests", []),
             "heldout_gate": str(heldout_gate),
             "regression_gate": str(regression_gate),
+            "heldout_gate_digest": digest_payload(heldout),
+            "regression_gate_digest": digest_payload(regression),
             "heldout_baseline_run": heldout.get("baseline_run"),
             "heldout_candidate_run": heldout.get("candidate_run"),
             "regression_baseline_run": regression.get("baseline_run"),
@@ -218,6 +215,35 @@ def write_composite_gate(*, heldout_gate: Path, regression_gate: Path, decision:
         },
     )
     return path
+
+
+def validate_composite_gate_inputs(
+    heldout: dict[str, Any],
+    regression: dict[str, Any],
+    decision: str,
+) -> None:
+    if heldout.get("split") != "heldout":
+        raise RuntimeError("Cannot compose gates unless the first gate is the heldout split.")
+    if regression.get("split") != "regression":
+        raise RuntimeError("Cannot compose gates unless the second gate is the regression split.")
+    for field, label in (
+        ("candidate_harness", "candidate harnesses"),
+        ("baseline_harness", "baseline harnesses"),
+        ("candidate_harness_digest", "candidate behavior digests"),
+        ("benchmark", "benchmarks"),
+        ("model", "models"),
+        ("suite_version", "benchmark suite versions"),
+        ("suite_digest", "benchmark suite digests"),
+        ("coverage_digest", "coverage digests"),
+        ("current_coverage_digest", "current coverage digests"),
+        ("coverage_policy_digest", "coverage policy digests"),
+    ):
+        if heldout.get(field) != regression.get(field):
+            raise RuntimeError(f"Cannot compose gates for different {label}.")
+    if decision == "promote" and (
+        heldout.get("decision") != "promote" or regression.get("decision") != "promote"
+    ):
+        raise RuntimeError("Cannot promote from a composite gate unless both component gates promote.")
 
 
 def write_cycle_rejection(*, summary: dict[str, Any], composite_gate: Path) -> Path:

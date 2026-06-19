@@ -8,7 +8,7 @@ from pathlib import Path
 
 from harness_rsi.benchmarks import compare_runs, evaluator_digest, gate_candidate
 from harness_rsi.cli import main
-from harness_rsi.cycle import run_experiment_cycle
+from harness_rsi.cycle import run_experiment_cycle, write_composite_gate
 from harness_rsi.harness import harness_behavior_digest
 from harness_rsi.io import read_json, read_jsonl, write_json
 from harness_rsi.versions import (
@@ -709,6 +709,17 @@ def test_compare_rejects_split_mismatch(tmp_path: Path) -> None:
         raise AssertionError("Expected split mismatch rejection.")
 
 
+def test_compare_rejects_coverage_digest_mismatch(tmp_path: Path) -> None:
+    baseline_run = write_fake_run(tmp_path / "baseline", coverage_digest="coverage-a")
+    candidate_run = write_fake_run(tmp_path / "candidate", coverage_digest="coverage-b")
+    try:
+        compare_runs(baseline_run, candidate_run)
+    except RuntimeError as error:
+        assert "different coverage digests" in str(error)
+    else:
+        raise AssertionError("Expected coverage digest mismatch rejection.")
+
+
 def test_create_candidate_version_from_proposal(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init"]) == 0
@@ -866,7 +877,10 @@ def test_harness_create_and_promote_cli_lifecycle(tmp_path: Path) -> None:
         )
         candidate = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
         assert candidate["status"] == "candidate"
-        gate = write_gate(tmp_path, candidate_digest=harness_behavior_digest(candidate))
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(candidate),
+        )
         assert (
             main(
                 [
@@ -881,10 +895,32 @@ def test_harness_create_and_promote_cli_lifecycle(tmp_path: Path) -> None:
             == 0
         )
         versions = read_json(tmp_path / ".rsi" / "harnesses" / "H1.json")
+        gate_payload = read_json(gate)
         assert versions["id"] == "H1"
         assert versions["status"] == "promoted"
         assert versions["promoted_from_gate"] == gate.name
         assert versions["lineage"]["pass_rate_delta"] == 0.1
+        assert versions["lineage"]["heldout_gate_digest"] == gate_payload["heldout_gate_digest"]
+        assert versions["lineage"]["regression_gate_digest"] == gate_payload[
+            "regression_gate_digest"
+        ]
+
+
+def test_promote_candidate_version_rejects_single_split_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        gate = write_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+        )
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "composite heldout+regression gate" in str(error)
+        else:
+            raise AssertionError("Expected single-split gate rejection.")
 
 
 def test_promote_candidate_version_rejects_missing_digest(tmp_path: Path) -> None:
@@ -913,6 +949,80 @@ def test_promote_candidate_version_rejects_digest_mismatch(tmp_path: Path) -> No
             assert "digest does not match" in str(error)
         else:
             raise AssertionError("Expected digest mismatch rejection.")
+
+
+def test_promote_candidate_version_rejects_stale_coverage_digest(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        manifest_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json"
+        coverage_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json"
+        manifest = read_json(manifest_path)
+        coverage = read_json(coverage_path)
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+            benchmark="sim-v0",
+            suite_version=manifest["suite_version"],
+            suite_digest=manifest["suite_digest"],
+            coverage_digest=coverage["coverage_digest"],
+            current_coverage_digest=coverage["coverage_digest"],
+            coverage_policy_digest=coverage["coverage_policy_digest"],
+        )
+
+        manifest["coverage_policy"]["waivers"][0]["owner"] = "changed-after-composite-gate"
+        write_json(manifest_path, manifest)
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "coverage digest is stale" in str(error)
+        else:
+            raise AssertionError("Expected stale coverage digest rejection.")
+
+
+def test_promote_candidate_version_rejects_missing_child_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+        )
+        composite = read_json(gate)
+        Path(composite["heldout_gate"]).unlink()
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "child gate not found" in str(error)
+        else:
+            raise AssertionError("Expected missing child gate rejection.")
+
+
+def test_promote_candidate_version_rejects_mutated_child_gate(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+        )
+        composite = read_json(gate)
+        heldout_gate = Path(composite["heldout_gate"])
+        child = read_json(heldout_gate)
+        child["pass_rate_delta"] = -1
+        write_json(heldout_gate, child)
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "child digest mismatch" in str(error)
+        else:
+            raise AssertionError("Expected mutated child gate rejection.")
 
 
 def test_harness_list_flags_filename_id_mismatch(tmp_path: Path) -> None:
@@ -1021,6 +1131,132 @@ def test_experiment_cycle_records_suite_identity_for_sim_v0(tmp_path: Path) -> N
         assert decision["evaluator_digests"]["regression"]
 
 
+def test_write_composite_gate_rejects_wrong_split_roles(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        heldout = write_gate(tmp_path, name="train-gate.json", split="train")
+        regression = write_gate(tmp_path, name="regression-gate.json", split="regression")
+        try:
+            write_composite_gate(
+                heldout_gate=heldout,
+                regression_gate=regression,
+                decision="promote",
+            )
+        except RuntimeError as error:
+            assert "first gate is the heldout split" in str(error)
+        else:
+            raise AssertionError("Expected split role mismatch rejection.")
+
+
+def test_write_composite_gate_rejects_identity_mismatches(tmp_path: Path) -> None:
+    cases = [
+        ("baseline_harness", {"baseline_harness": "H9"}, "baseline harnesses"),
+        ("candidate_harness", {"candidate_harness": "H9"}, "candidate harnesses"),
+        ("candidate_digest", {"candidate_digest": "digest-b"}, "candidate behavior digests"),
+        ("benchmark", {"benchmark": "other-benchmark"}, "benchmarks"),
+        ("model", {"model": "other-model"}, "models"),
+    ]
+    for field, regression_overrides, expected_error in cases:
+        case_path = tmp_path / field
+        case_path.mkdir()
+        with working_dir(case_path):
+            heldout = write_gate(
+                Path.cwd(),
+                name="heldout-gate.json",
+                split="heldout",
+                candidate_digest="digest-a",
+            )
+            regression_kwargs = {"candidate_digest": "digest-a", **regression_overrides}
+            regression = write_gate(
+                Path.cwd(),
+                name="regression-gate.json",
+                split="regression",
+                **regression_kwargs,
+            )
+            try:
+                write_composite_gate(
+                    heldout_gate=heldout,
+                    regression_gate=regression,
+                    decision="promote",
+                )
+            except RuntimeError as error:
+                assert expected_error in str(error)
+            else:
+                raise AssertionError(f"Expected {field} mismatch rejection.")
+
+
+def test_write_composite_gate_rejects_coverage_digest_mismatch(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        heldout = write_gate(
+            tmp_path,
+            name="heldout-gate.json",
+            split="heldout",
+            coverage_digest="coverage-a",
+        )
+        regression = write_gate(
+            tmp_path,
+            name="regression-gate.json",
+            split="regression",
+            coverage_digest="coverage-b",
+        )
+        try:
+            write_composite_gate(
+                heldout_gate=heldout,
+                regression_gate=regression,
+                decision="promote",
+            )
+        except RuntimeError as error:
+            assert "coverage digests" in str(error)
+        else:
+            raise AssertionError("Expected coverage digest mismatch rejection.")
+
+
+def test_write_composite_gate_rejects_suite_digest_mismatch(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        heldout = write_gate(
+            tmp_path,
+            name="heldout-gate.json",
+            split="heldout",
+            suite_digest="suite-a",
+        )
+        regression = write_gate(
+            tmp_path,
+            name="regression-gate.json",
+            split="regression",
+            suite_digest="suite-b",
+        )
+        try:
+            write_composite_gate(
+                heldout_gate=heldout,
+                regression_gate=regression,
+                decision="promote",
+            )
+        except RuntimeError as error:
+            assert "benchmark suite digests" in str(error)
+        else:
+            raise AssertionError("Expected suite digest mismatch rejection.")
+
+
+def test_write_composite_gate_rejects_promote_when_component_rejects(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        heldout = write_gate(tmp_path, name="heldout-gate.json", split="heldout")
+        regression = write_gate(
+            tmp_path,
+            name="regression-gate.json",
+            split="regression",
+            decision="reject",
+        )
+        try:
+            write_composite_gate(
+                heldout_gate=heldout,
+                regression_gate=regression,
+                decision="promote",
+            )
+        except RuntimeError as error:
+            assert "both component gates promote" in str(error)
+        else:
+            raise AssertionError("Expected component reject mismatch rejection.")
+
+
 def write_fake_run(
     path: Path,
     *,
@@ -1029,6 +1265,7 @@ def write_fake_run(
     model: str = "gpt-5.5",
     task_digest: str = "same-tasks",
     split: str = "heldout",
+    coverage_digest: str | None = None,
 ) -> Path:
     path.mkdir(parents=True)
     write_json(path / "harness.snapshot.json", {"model": model})
@@ -1042,11 +1279,14 @@ def write_fake_run(
                 "attempt": 0,
             }
         )
+    metadata = {"benchmark": "fake", "split": split, "harness": path.name}
+    if coverage_digest:
+        metadata["coverage_digest"] = coverage_digest
     write_json(
         path / "results.json",
         {
             "run_id": path.name,
-            "metadata": {"benchmark": "fake", "split": split, "harness": path.name},
+            "metadata": metadata,
             "task_digest": task_digest,
             "tasks": task_count,
             "passed": passed,
@@ -1189,23 +1429,81 @@ def write_proposal(path: Path) -> Path:
 def write_gate(
     path: Path,
     *,
+    name: str = "gate-test.json",
     decision: str = "promote",
     baseline_harness: str = "H0",
     candidate_harness: str = "H1",
     candidate_digest: str | None = None,
+    benchmark: str = "synthetic",
+    split: str = "heldout",
+    model: str = "gpt-5.5",
+    suite_version: str = "synthetic-v0",
+    suite_digest: str = "suite-a",
+    coverage_digest: str | None = None,
+    current_coverage_digest: str | None = None,
+    coverage_policy_digest: str | None = None,
 ) -> Path:
-    gate = path / ".rsi" / "gates" / "gate-test.json"
+    gate = path / ".rsi" / "gates" / name
     payload = {
         "decision": decision,
         "baseline_harness": baseline_harness,
         "candidate_harness": candidate_harness,
         "baseline_run": "baseline",
         "candidate_run": "candidate",
-        "benchmark": "synthetic",
-        "split": "heldout",
+        "benchmark": benchmark,
+        "split": split,
+        "model": model,
+        "suite_version": suite_version,
+        "suite_digest": suite_digest,
+        "coverage_digest": coverage_digest,
+        "current_coverage_digest": current_coverage_digest,
+        "coverage_policy_digest": coverage_policy_digest,
+        "evaluator_digests": [f"{split}-evaluator"],
         "pass_rate_delta": 0.1,
     }
     if candidate_digest is not None:
         payload["candidate_harness_digest"] = candidate_digest
     write_json(gate, payload)
     return gate
+
+
+def write_promote_composite_gate(
+    path: Path,
+    *,
+    candidate_digest: str,
+    benchmark: str = "synthetic",
+    suite_version: str = "synthetic-v0",
+    suite_digest: str = "suite-a",
+    coverage_digest: str | None = None,
+    current_coverage_digest: str | None = None,
+    coverage_policy_digest: str | None = None,
+) -> Path:
+    heldout = write_gate(
+        path,
+        name="heldout-gate.json",
+        split="heldout",
+        candidate_digest=candidate_digest,
+        benchmark=benchmark,
+        suite_version=suite_version,
+        suite_digest=suite_digest,
+        coverage_digest=coverage_digest,
+        current_coverage_digest=current_coverage_digest,
+        coverage_policy_digest=coverage_policy_digest,
+    )
+    regression = write_gate(
+        path,
+        name="regression-gate.json",
+        split="regression",
+        candidate_digest=candidate_digest,
+        benchmark=benchmark,
+        suite_version=suite_version,
+        suite_digest=suite_digest,
+        coverage_digest=coverage_digest,
+        current_coverage_digest=current_coverage_digest,
+        coverage_policy_digest=coverage_policy_digest,
+    )
+    return write_composite_gate(
+        heldout_gate=heldout,
+        regression_gate=regression,
+        decision="promote",
+    )

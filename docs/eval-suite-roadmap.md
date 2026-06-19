@@ -195,6 +195,14 @@ Waiver lifecycle reports do not add promotion semantics by themselves; they make
 measurement debt easier to query before a later gate policy decides whether any
 overdue waiver should block promotion.
 
+CM-0015 hardens the composite-gate boundary. Run comparison now rejects
+baseline/candidate coverage-digest mismatch, composite gates reject mixed split
+roles, benchmarks, models, suite identities, coverage identities, coverage-policy
+identities, and candidate behavior digests, and promotion requires a composite
+heldout+regression gate with untampered child gate digests. This is a gate
+semantic change: old single-split promote gates are no longer sufficient
+promotion evidence.
+
 ## Frontier And World-Model Pressure
 
 Frontier-model interaction should preserve the project invariant: fixed model,
@@ -271,14 +279,16 @@ CM-0013 added static Decart/Oasis-style rollout trace cases and promoted key
 world-model trace families into required coverage.
 CM-0014 added a waiver lifecycle report grouped by owner and review date without
 changing promotion semantics.
+CM-0015 added composite-gate and promotion-boundary digest checks.
 
 The next increment should target:
 
-1. Add digest mismatch tests at the composite-gate and promotion boundary.
-2. Decide when efficiency thresholds are reliable enough to gate attempts,
+1. Decide when efficiency thresholds are reliable enough to gate attempts,
    duration, tool calls, and cost.
-3. Decide whether overdue waiver lifecycle states should become a future gate
+2. Decide whether overdue waiver lifecycle states should become a future gate
    policy or stay audit-only.
+3. Add a stricter split-isolation audit for proposal evidence versus heldout and
+   regression evidence.
 4. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
 5. Keep live simulator or world-model adapters behind stable local trace
