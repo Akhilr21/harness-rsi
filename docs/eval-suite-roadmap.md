@@ -126,8 +126,10 @@ The command reads the materialized `.rsi/benchmarks/sim-v0` copy, writes
 unclassified missing environment/family/split cells. The full sparse matrix
 stays in the JSON artifact so review stays possible without flooding every CLI
 run. Gates fail when required cells are missing and `fail_on_missing_required`
-is enabled. Waived and unclassified missing cells are audit evidence only until
-promoted to required coverage.
+is enabled. Waived and unclassified missing cells are audit evidence by default.
+Waived cells can also become gate evidence when a split policy enables overdue
+waiver review, or they can be promoted to required coverage in a later suite
+version.
 
 Waivers are now typed measurement debt. Each waiver must include a non-empty
 `reason`, `owner`, `tracking_ref`, and `review_by` date in `YYYY-MM-DD` format,
@@ -137,9 +139,10 @@ overlap are rejected as malformed suite policy.
 The waiver lifecycle command writes `waiver_lifecycle.json` as an alternate
 index over the same metadata, grouped by owner and review date. It also compares
 fresh coverage identity to the stored `coverage.json` digest so stale coverage
-artifacts are visible. It is audit/query evidence; waived cells remain
-non-blocking unless a later gate-policy change explicitly adds expired-waiver or
-overdue-waiver promotion semantics.
+artifacts are visible. It is audit/query evidence by default. Split
+`gate_policy.json` can opt into overdue-waiver promotion semantics with an
+explicit review date, but `due_soon` waivers and retire candidates remain
+non-blocking evidence.
 
 CM-0013 adds required `world_model_static` coverage for
 `rollout_summarization`, heldout and regression `reset_replay`, and regression
@@ -295,12 +298,14 @@ CM-0016 added train-only proposal evidence manifests and split-isolation audit
 gates.
 CM-0017 added attempts/tool-call efficiency gates and opt-in duration/cost
 thresholds.
+CM-0018 added deterministic overdue-waiver review gates for active missing
+coverage debt.
 
 The next increment should target:
 
-1. Decide whether overdue waiver lifecycle states should become a future gate
-   policy or stay audit-only.
-2. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
+1. Run repeated local cycles with coverage, waiver review, efficiency, and
+   split-isolation gates enabled together.
+2. Add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
 3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.

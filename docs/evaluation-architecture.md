@@ -141,8 +141,10 @@ The waiver lifecycle report is an alternate index over waiver metadata. It
 groups waived cells by owner and review date, carries tracking and expiry
 context, and preserves suite/coverage identity. It also reports whether fresh
 coverage identity still matches the stored `coverage.json` digest. It is
-separate from scoring and does not add a promotion check unless a later
-gate-policy change explicitly does so.
+separate from scoring by default. A split `gate_policy.json` can opt into
+promotion-blocking overdue waiver review with an explicit `waiver_review_as_of`
+date. That gate only blocks overdue active-missing waivers; due-soon waivers and
+overdue retire candidates remain evidence for cleanup.
 
 ## Evaluator And Suite Digests
 
@@ -208,15 +210,19 @@ Current gate policy can enforce:
 - protected environments can veto promotion even when aggregate score improves
 - required failure-family coverage must be present or explicitly waived
 - gate-time coverage digest must match the coverage digest recorded by the runs
+- overdue active-missing waivers can fail gates when an explicit review policy
+  is configured
 - attempts and tool-call regressions can fail gates when configured
 - duration and cost regressions can fail gates when explicitly configured
 
 `sim-v0` currently enforces `max_attempt_delta: 0` and
-`max_tool_call_delta: 0` for heldout and regression gates. Duration remains
-unset by default because local wall-clock timing is noisy. Cost remains unset
-because provider usage is not collected yet. If a split policy configures a
-threshold for a metric whose value is unavailable, the gate fails closed with
-`metric_unavailable`.
+`max_tool_call_delta: 0` for heldout and regression gates. It also enables
+`fail_on_overdue_waivers` with `waiver_review_as_of: 2026-06-19`, so the suite
+has a deterministic waiver-review boundary rather than a wall-clock-dependent
+one. Duration remains unset by default because local wall-clock timing is noisy.
+Cost remains unset because provider usage is not collected yet. If a split
+policy configures a threshold for a metric whose value is unavailable, the gate
+fails closed with `metric_unavailable`.
 
 This prevents an aggregate win from masking a local failure in a protected
 environment. It also prevents a candidate from being promoted against coverage
@@ -226,11 +232,14 @@ Composite gates are the promotion boundary. A composite gate can only combine a
 heldout gate and a regression gate for the same baseline harness, candidate
 harness, candidate behavior digest, benchmark, model, suite version, suite
 digest, coverage digest, current coverage digest, and coverage-policy digest. A
-composite `promote` decision requires both component gates to promote. The
-composite artifact records canonical child-gate digests so promotion can re-read
-the child gate files and reject missing or mutated evidence. Composite gates
-also carry the split-isolation audit digest; promotion rejects missing, failing,
-or mutated split-isolation evidence.
+digest, coverage digest, current coverage digest, coverage-policy digest,
+waiver-review policy, and waiver-review evidence. A composite `promote`
+decision requires both component gates to promote. The composite artifact
+records canonical child-gate digests so promotion can re-read the child gate
+files and reject missing or mutated evidence. Composite gates also carry the
+split-isolation audit digest; promotion rejects missing, failing, or mutated
+split-isolation evidence, and re-runs the stored coverage and waiver-review
+policy before mutating a candidate harness.
 
 ## Version-Aware Promotion
 

@@ -452,8 +452,10 @@ def gate_candidate(
     coverage_evidence = coverage_gate_evidence(
         comparison["benchmark"],
         expected_coverage_digest=comparison.get("coverage_digest"),
+        waiver_review_policy=thresholds["waiver_review_policy"],
     )
     coverage_failures = coverage_evidence["coverage_failures"]
+    waiver_review_failures = coverage_evidence["waiver_review_failures"]
     efficiency_failures = find_efficiency_failures(
         comparison["metric_deltas"],
         thresholds["efficiency_thresholds"],
@@ -462,6 +464,7 @@ def gate_candidate(
         delta >= thresholds["min_delta"]
         and not environment_failures
         and not coverage_failures
+        and not waiver_review_failures
         and not efficiency_failures
     )
     decision = {
@@ -472,6 +475,7 @@ def gate_candidate(
         "max_allowed_drop": thresholds["max_allowed_drop"],
         "max_environment_drop": thresholds["max_environment_drop"],
         "efficiency_thresholds": thresholds["efficiency_thresholds"],
+        "waiver_review_policy": thresholds["waiver_review_policy"],
         "effective_min_delta": thresholds["min_delta"],
         "protected_environments": thresholds["protected_environments"],
         "environment_failures": environment_failures,
@@ -483,7 +487,7 @@ def gate_candidate(
             if passed
             else (
                 "Candidate failed pass-rate, regression, environment, coverage, "
-                "or efficiency gate."
+                "waiver review, or efficiency gate."
             )
         ),
     }
@@ -518,6 +522,7 @@ def resolve_gate_thresholds(
     if policy_environment_drop is not None:
         policy_environment_drop = float(policy_environment_drop)
     efficiency_thresholds = resolve_efficiency_thresholds(policy)
+    waiver_review_policy = resolve_waiver_review_policy(policy)
 
     min_delta = policy_min if policy_min > 0 else -policy_drop
     if split == "regression" and policy_min == 0:
@@ -534,6 +539,7 @@ def resolve_gate_thresholds(
         "max_allowed_drop": policy_drop,
         "max_environment_drop": policy_environment_drop,
         "efficiency_thresholds": efficiency_thresholds,
+        "waiver_review_policy": waiver_review_policy,
         "protected_environments": protected_environments,
     }
 
@@ -544,6 +550,27 @@ def resolve_efficiency_thresholds(policy: dict[str, Any]) -> dict[str, float | N
         "tool_calls": optional_float(policy.get("max_tool_call_delta")),
         "duration_ms": optional_float(policy.get("max_duration_ms_delta")),
         "cost_usd": optional_float(policy.get("max_cost_usd_delta")),
+    }
+
+
+def resolve_waiver_review_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    fail_on_overdue = bool(policy.get("fail_on_overdue_waivers", False))
+    review_as_of = policy.get("waiver_review_as_of")
+    if review_as_of is not None:
+        review_as_of = str(review_as_of)
+        validate_iso_date(review_as_of, "gate_policy waiver_review_as_of")
+    if fail_on_overdue and review_as_of is None:
+        raise RuntimeError(
+            "gate_policy waiver_review_as_of must be set when "
+            "fail_on_overdue_waivers is enabled."
+        )
+    due_within_days = int(policy.get("waiver_due_within_days", 30))
+    if due_within_days < 0:
+        raise RuntimeError("waiver_due_within_days must be greater than or equal to 0.")
+    return {
+        "fail_on_overdue_waivers": fail_on_overdue,
+        "waiver_review_as_of": review_as_of,
+        "waiver_due_within_days": due_within_days,
     }
 
 
@@ -615,6 +642,7 @@ def find_coverage_failures(benchmark: str) -> list[dict[str, Any]]:
 def coverage_gate_evidence(
     benchmark: str,
     expected_coverage_digest: str | None = None,
+    waiver_review_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not benchmark_dir(benchmark).exists():
         return empty_coverage_evidence()
@@ -635,10 +663,26 @@ def coverage_gate_evidence(
                 "status": "coverage_drift",
             },
         ]
+    waiver_review_policy = resolve_waiver_review_policy(waiver_review_policy or {})
+    waiver_review = None
+    waiver_review_failures: list[dict[str, Any]] = []
+    if should_build_waiver_review(waiver_review_policy):
+        waiver_report = build_waiver_report(
+            benchmark,
+            as_of=waiver_review_policy["waiver_review_as_of"],
+            due_within_days=waiver_review_policy["waiver_due_within_days"],
+        )
+        waiver_review = summarize_waiver_review(waiver_report)
+        waiver_review_failures = find_waiver_review_failures(
+            waiver_report,
+            waiver_review_policy,
+        )
     return {
         "current_coverage_digest": current_coverage_digest,
         "coverage_policy_digest": report.get("coverage_policy_digest"),
         "coverage_failures": failures,
+        "waiver_review": waiver_review,
+        "waiver_review_failures": waiver_review_failures,
         "missing_required_cells": report.get("missing_required_cells", []),
         "waived_missing_cells": report.get("waived_missing_cells", []),
         "unclassified_missing_count": len(report.get("unclassified_missing_cells", [])),
@@ -650,10 +694,64 @@ def empty_coverage_evidence() -> dict[str, Any]:
         "current_coverage_digest": None,
         "coverage_policy_digest": None,
         "coverage_failures": [],
+        "waiver_review": None,
+        "waiver_review_failures": [],
         "missing_required_cells": [],
         "waived_missing_cells": [],
         "unclassified_missing_count": 0,
     }
+
+
+def should_build_waiver_review(policy: dict[str, Any]) -> bool:
+    return bool(
+        policy["fail_on_overdue_waivers"]
+        or policy["waiver_review_as_of"]
+        or policy["waiver_due_within_days"] != 30
+    )
+
+
+def summarize_waiver_review(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "as_of": report["as_of"],
+        "due_within_days": report["due_within_days"],
+        "waiver_count": report["waiver_count"],
+        "active_missing_count": report["active_missing_count"],
+        "retire_candidate_count": report["retire_candidate_count"],
+        "review_status_counts": report["review_status_counts"],
+        "review_due_count": report["review_due_count"],
+        "next_review_by": report["next_review_by"],
+        "coverage_digest_matches_stored": report["coverage_digest_matches_stored"],
+        "waiver_lifecycle_digest": report["waiver_lifecycle_digest"],
+    }
+
+
+def find_waiver_review_failures(
+    report: dict[str, Any],
+    policy: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if not policy["fail_on_overdue_waivers"]:
+        return []
+    failures = []
+    for waiver in report["waivers"]:
+        if waiver["review_state"] != "overdue":
+            continue
+        if waiver["lifecycle_state"] != "active_missing":
+            continue
+        failures.append(
+            {
+                "environment": waiver["environment"],
+                "family": waiver["family"],
+                "split": waiver["split"],
+                "identity": waiver["identity"],
+                "owner": waiver["owner"],
+                "tracking_ref": waiver["tracking_ref"],
+                "review_by": waiver["review_by"],
+                "review_state": waiver["review_state"],
+                "lifecycle_state": waiver["lifecycle_state"],
+                "status": "overdue_waiver",
+            }
+        )
+    return failures
 
 
 def write_coverage_report(benchmark: str) -> Path:
@@ -963,14 +1061,16 @@ def normalize_policy_cell_base(cell: Any, label: str) -> dict[str, str]:
 
 
 def validate_review_date(value: str) -> None:
+    validate_iso_date(value, "coverage_policy waiver review_by")
+
+
+def validate_iso_date(value: str, label: str) -> None:
     try:
         parsed = datetime.strptime(value, "%Y-%m-%d")
     except ValueError as error:
-        raise RuntimeError(
-            f"coverage_policy waiver review_by must be YYYY-MM-DD: {value}."
-        ) from error
+        raise RuntimeError(f"{label} must be YYYY-MM-DD: {value}.") from error
     if parsed.strftime("%Y-%m-%d") != value:
-        raise RuntimeError(f"coverage_policy waiver review_by must be YYYY-MM-DD: {value}.")
+        raise RuntimeError(f"{label} must be YYYY-MM-DD: {value}.")
 
 
 def validate_policy_cell_identities(cells: list[dict[str, Any]], label: str) -> None:

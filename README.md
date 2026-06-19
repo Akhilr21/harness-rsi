@@ -167,6 +167,8 @@ Gates now support aggregate pass-rate thresholds, regression-drop tolerance,
 per-environment maximum drops, required coverage, split-isolation evidence, and
 efficiency thresholds. `sim-v0` enforces no additional attempts or tool calls
 for heldout/regression gates, while duration and cost remain unset by default.
+It also pins waiver review to `2026-06-19` and rejects overdue active-missing
+waivers when that split policy is enabled.
 
 The reporting and identity layer is also part of the harness now. `sim-v0`
 materialization writes `coverage.json`, and the report can be regenerated with:
@@ -180,19 +182,22 @@ Compiled task rows carry evaluator digests, run metadata carries suite and
 coverage digests, and compare/gate/cycle evidence preserves those identities.
 `sim-v0` also defines required and waived coverage cells. Missing required cells
 fail gates; waived and unclassified missing cells remain visible in artifacts
-without blocking promotion by themselves.
+without blocking promotion by themselves unless the split policy explicitly
+enables overdue-waiver review.
 Waived cells carry owner, tracking reference, review date, and expiry-condition
 metadata so intentionally missing evidence stays reviewable.
 Promotion now requires a composite heldout+regression gate. Composite gates fail
 closed when child gates mix split roles, benchmarks, models, suite digests,
-coverage digests, coverage-policy digests, or candidate behavior digests, and
-promotion rechecks child gate digests before mutating a candidate harness.
+coverage digests, coverage-policy digests, waiver-review evidence, or candidate
+behavior digests, and promotion rechecks child gate digests before mutating a
+candidate harness.
 The coverage command prints a concise summary and writes the full
 environment/family/split matrix to `.rsi/benchmarks/<name>/coverage.json`.
 The waiver lifecycle command writes
 `.rsi/benchmarks/<name>/waiver_lifecycle.json`, groups active waived cells by
 owner and review date, and compares fresh coverage identity to the stored
-`coverage.json` digest without changing promotion semantics.
+`coverage.json` digest. A gate policy can reuse the same lifecycle evidence to
+block overdue active-missing waivers with an explicit review date.
 
 See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
 expectations.
@@ -218,7 +223,8 @@ The current Decart-style world-model coverage is represented by static
 adapters should wait until suite/evaluator digests and coverage reporting are in
 place and stable. No live simulator, external world-model adapter, or
 Decart/Oasis runtime validation has been exercised yet. Gates also reject
-coverage-policy drift between run time and gate time.
+coverage-policy drift between run time and gate time, plus overdue waiver debt
+when the split policy enables that review gate.
 
 ## Artifact layout
 

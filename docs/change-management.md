@@ -63,12 +63,20 @@ Every coverage-policy increment should record:
   gates, cycle summaries, rejection artifacts, and promoted harness lineage
 - lifecycle-report grouping keys, artifact paths, and whether the report changes
   promotion semantics
+- waiver-review gate fields, if any, including whether the policy is audit-only,
+  whether overdue active-missing waivers fail closed, and which deterministic
+  `as_of` date the gate uses
 
 Missing required evidence should fail closed. A waived cell should be explicit
 evidence, not an absence that happens to pass. Waivers are acceptable only when
 they preserve the measurement claim for the suite version under review, and the
 suite should reject waiver entries that do not identify who owns the missing
 evidence, where it is tracked, and when it must be reviewed.
+
+If waiver review changes promotion semantics, the gate must carry the review
+policy and lifecycle evidence into the gate artifact. Blocking policies should
+use an explicit review date rather than the wall clock so gates remain
+reproducible.
 
 This matters more, not less, for frontier-model and world-model work. Stronger
 frontier models can raise aggregate scores while still hiding localized harness
@@ -541,9 +549,9 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   coverage-policy digest, waiver identities, tracking references, review dates,
   expiry conditions, lifecycle state, and review status as `overdue`,
   `due_soon`, or `scheduled`.
-- Gate enforcement: no promotion semantics changed. Waived cells remain
-  non-blocking unless a later gate-policy change explicitly makes overdue or
-  expired waiver states promotion failures.
+- Gate enforcement: no promotion semantics changed in CM-0014. Waived cells
+  remain non-blocking in this increment; CM-0018 later adds explicit overdue
+  active-waiver gate policy.
 - Frontier/world-model note: static world-model trace coverage now has a way to
   keep deferred evidence visible by owner and review date. This helps prevent
   frontier-model aggregate scores from hiding eval-suite debt, but it still does
@@ -703,3 +711,52 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
 - Remediation: next decide whether overdue waiver lifecycle states should become
   promotion policy, then keep external adapters read-only until local gates are
   stable under repeated cycles.
+
+## CM-0018: Waiver Review Gate Policy
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/gate_policy.json`,
+  `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cycle.py`,
+  `src/harness_rsi/versions.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: waivers are measurement debt. Querying them is useful, but a
+  candidate should not promote from overdue missing evidence when the suite
+  owner has explicitly made waiver review a promotion gate. The gate must remain
+  deterministic: no implicit wall-clock date, no evaluator changes, and no
+  promotion impact unless split `gate_policy.json` opts in.
+- Change made: split gate policy now supports `fail_on_overdue_waivers`,
+  `waiver_review_as_of`, and `waiver_due_within_days`. When blocking is enabled,
+  `waiver_review_as_of` is required and must be `YYYY-MM-DD`. Gates write
+  `waiver_review_policy`, a summarized `waiver_review`, and
+  `waiver_review_failures`. Only waivers with `review_state=overdue` and
+  `lifecycle_state=active_missing` fail promotion. `due_soon` waivers and
+  overdue retire candidates remain evidence-only. Composite gates require
+  heldout/regression waiver review policy and evidence to match, and promotion
+  re-runs the stored policy before mutating a candidate harness.
+- Gate enforcement: `sim-v0` enables overdue-waiver blocking for heldout and
+  regression with `waiver_review_as_of: 2026-06-19`. The current suite has four
+  active missing waivers scheduled for `2026-09-30`, so current gates continue
+  to pass. A review policy pinned to `2026-10-01` rejects equal-score candidates
+  until those waivers are renewed, retired, or promoted into required coverage.
+- Frontier/world-model note: for frontier models and Decart/Oasis-style
+  world-model harnesses, missing trace coverage can look harmless while aggregate
+  score improves. Overdue waiver gates make that measurement debt explicit
+  before product-facing or simulator-backed claims are allowed to build on it.
+- Validation run: `pytest` reported 84 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` in `/private/tmp`,
+  ran a full mock cycle with `waiver_review_as_of=2026-06-19`, promoted with no
+  waiver review failures, then forced a temp policy to `2026-10-01` and
+  confirmed an equal-score heldout gate rejected with four `overdue_waiver`
+  failures.
+- Observation: lifecycle reports already exposed owner, review date, stale
+  coverage identity, and active/retire state, but a candidate could still
+  promote while active missing evidence was overdue if reviewers did not inspect
+  the report manually.
+- Learning: measurement debt becomes promotion debt only when it is bound to an
+  explicit policy, review date, and digest evidence. Blocking overdue active
+  waivers is defensible; blocking due-soon or already-covered waivers is too
+  noisy for this stage.
+- Remediation: run repeated local cycles with the waiver review gate enabled,
+  then add read-only external benchmark adapters once coverage, efficiency,
+  split-isolation, and waiver-review gates remain stable together.

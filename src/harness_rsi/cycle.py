@@ -477,6 +477,8 @@ def write_composite_gate(
             "coverage_digest": heldout.get("coverage_digest"),
             "current_coverage_digest": heldout.get("current_coverage_digest"),
             "coverage_policy_digest": heldout.get("coverage_policy_digest"),
+            "waiver_review_policy": heldout.get("waiver_review_policy"),
+            "waiver_review": heldout.get("waiver_review"),
             "split": "heldout+regression",
             "baseline_run": heldout.get("baseline_run"),
             "candidate_run": heldout.get("candidate_run"),
@@ -500,6 +502,10 @@ def write_composite_gate(
             "regression_decision": regression.get("decision"),
             "heldout_pass_rate_delta": heldout.get("pass_rate_delta"),
             "regression_pass_rate_delta": regression.get("pass_rate_delta"),
+            "heldout_waiver_review": heldout.get("waiver_review"),
+            "regression_waiver_review": regression.get("waiver_review"),
+            "heldout_waiver_review_failures": heldout.get("waiver_review_failures", []),
+            "regression_waiver_review_failures": regression.get("waiver_review_failures", []),
             "rationale": (
                 "Heldout and regression gates both passed."
                 if decision == "promote"
@@ -530,6 +536,8 @@ def validate_composite_gate_inputs(
         ("coverage_digest", "coverage digests"),
         ("current_coverage_digest", "current coverage digests"),
         ("coverage_policy_digest", "coverage policy digests"),
+        ("waiver_review_policy", "waiver review policies"),
+        ("waiver_review", "waiver review evidence"),
     ):
         if heldout.get(field) != regression.get(field):
             raise RuntimeError(f"Cannot compose gates for different {label}.")

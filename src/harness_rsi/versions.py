@@ -95,6 +95,8 @@ def promote_candidate_version(*, candidate: str, gate_path: Path) -> Path:
             "coverage_digest": gate.get("coverage_digest"),
             "current_coverage_digest": gate.get("current_coverage_digest"),
             "coverage_policy_digest": gate.get("coverage_policy_digest"),
+            "waiver_review_policy": gate.get("waiver_review_policy"),
+            "waiver_review": gate.get("waiver_review"),
             "evaluator_digests": gate.get("evaluator_digests"),
             "heldout_evaluator_digests": gate.get("heldout_evaluator_digests"),
             "regression_evaluator_digests": gate.get("regression_evaluator_digests"),
@@ -189,6 +191,7 @@ def validate_promotion_coverage_current(gate: dict[str, Any]) -> None:
     evidence = coverage_gate_evidence(
         str(benchmark),
         expected_coverage_digest=str(coverage_digest),
+        waiver_review_policy=gate.get("waiver_review_policy"),
     )
     coverage_drift = [
         failure
@@ -197,6 +200,8 @@ def validate_promotion_coverage_current(gate: dict[str, Any]) -> None:
     ]
     if coverage_drift:
         raise RuntimeError("Composite promotion gate coverage digest is stale.")
+    if evidence.get("waiver_review_failures"):
+        raise RuntimeError("Composite promotion gate waiver review policy is failing.")
 
 
 def apply_config_patch(config: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

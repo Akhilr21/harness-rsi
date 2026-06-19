@@ -74,10 +74,16 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         gate_policy = read_json(root / "gate_policy.json")
         assert gate_policy["heldout"]["max_attempt_delta"] == 0
         assert gate_policy["heldout"]["max_tool_call_delta"] == 0
+        assert gate_policy["heldout"]["fail_on_overdue_waivers"] is True
+        assert gate_policy["heldout"]["waiver_review_as_of"] == "2026-06-19"
+        assert gate_policy["heldout"]["waiver_due_within_days"] == 30
         assert "max_duration_ms_delta" not in gate_policy["heldout"]
         assert "max_cost_usd_delta" not in gate_policy["heldout"]
         assert gate_policy["regression"]["max_attempt_delta"] == 0
         assert gate_policy["regression"]["max_tool_call_delta"] == 0
+        assert gate_policy["regression"]["fail_on_overdue_waivers"] is True
+        assert gate_policy["regression"]["waiver_review_as_of"] == "2026-06-19"
+        assert gate_policy["regression"]["waiver_due_within_days"] == 30
         assert "max_duration_ms_delta" not in gate_policy["regression"]
         assert "max_cost_usd_delta" not in gate_policy["regression"]
         heldout = read_jsonl(root / "heldout.jsonl")
@@ -836,6 +842,251 @@ def test_gate_allows_waived_missing_coverage(tmp_path: Path) -> None:
         ]
 
 
+def test_gate_allows_scheduled_waiver_review_under_policy(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        waiver = {
+            "environment": "data_ops",
+            "family": "metric_selection",
+            "split": "regression",
+            "reason": "Covered by heldout until regression data fixtures exist.",
+            "owner": "data-evals",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2026-09-30",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "fail_on_overdue_waivers": True,
+                    "waiver_review_as_of": "2026-06-19",
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["waiver_review_policy"] == {
+            "fail_on_overdue_waivers": True,
+            "waiver_review_as_of": "2026-06-19",
+            "waiver_due_within_days": 30,
+        }
+        assert gate["waiver_review"]["review_status_counts"] == {
+            "overdue": 0,
+            "due_soon": 0,
+            "scheduled": 1,
+        }
+        assert gate["waiver_review_failures"] == []
+
+
+def test_gate_rejects_overdue_active_missing_waiver_when_policy_enabled(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        waiver = {
+            "environment": "data_ops",
+            "family": "metric_selection",
+            "split": "regression",
+            "reason": "Covered by heldout until regression data fixtures exist.",
+            "owner": "data-evals",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2026-09-30",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "fail_on_overdue_waivers": True,
+                    "waiver_review_as_of": "2026-10-01",
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "reject"
+        assert gate["pass_rate_delta"] == 0
+        assert gate["waiver_review"]["review_status_counts"] == {
+            "overdue": 1,
+            "due_soon": 0,
+            "scheduled": 0,
+        }
+        assert gate["waiver_review_failures"] == [
+            {
+                "environment": "data_ops",
+                "family": "metric_selection",
+                "split": "regression",
+                "identity": "data_ops/metric_selection/regression",
+                "owner": "data-evals",
+                "tracking_ref": "TEST-WAIVER",
+                "review_by": "2026-09-30",
+                "review_state": "overdue",
+                "lifecycle_state": "active_missing",
+                "status": "overdue_waiver",
+            }
+        ]
+
+
+def test_gate_keeps_due_soon_waiver_review_informational(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        waiver = {
+            "environment": "data_ops",
+            "family": "metric_selection",
+            "split": "regression",
+            "reason": "Covered by heldout until regression data fixtures exist.",
+            "owner": "data-evals",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2026-09-30",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "fail_on_overdue_waivers": True,
+                    "waiver_review_as_of": "2026-09-15",
+                    "waiver_due_within_days": 30,
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["waiver_review"]["review_status_counts"] == {
+            "overdue": 0,
+            "due_soon": 1,
+            "scheduled": 0,
+        }
+        assert gate["waiver_review_failures"] == []
+
+
+def test_gate_allows_overdue_retire_candidate_waiver(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        waiver = {
+            "environment": "fake",
+            "family": "smoke",
+            "split": "heldout",
+            "reason": "Covered now; waiver should be retired rather than block promotion.",
+            "owner": "eval-suite",
+            "tracking_ref": "TEST-WAIVER",
+            "review_by": "2026-09-30",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "fail_on_overdue_waivers": True,
+                    "waiver_review_as_of": "2026-10-01",
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["waiver_review"]["retire_candidate_count"] == 1
+        assert gate["waiver_review"]["review_status_counts"] == {
+            "overdue": 1,
+            "due_soon": 0,
+            "scheduled": 0,
+        }
+        assert gate["waiver_review_failures"] == []
+
+
+def test_gate_requires_explicit_waiver_review_date_for_blocking_policy(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {"heldout": {"min_pass_rate_delta": 0, "fail_on_overdue_waivers": True}},
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        try:
+            gate_candidate(
+                baseline_run=baseline_run,
+                candidate_run=candidate_run,
+                min_pass_rate_delta=0,
+                max_allowed_drop=0,
+            )
+        except RuntimeError as error:
+            assert "waiver_review_as_of" in str(error)
+        else:
+            raise AssertionError("Expected missing waiver_review_as_of rejection.")
+
+
+def test_gate_rejects_malformed_waiver_review_date(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "fail_on_overdue_waivers": True,
+                    "waiver_review_as_of": "10-01-2026",
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        try:
+            gate_candidate(
+                baseline_run=baseline_run,
+                candidate_run=candidate_run,
+                min_pass_rate_delta=0,
+                max_allowed_drop=0,
+            )
+        except RuntimeError as error:
+            assert "gate_policy waiver_review_as_of must be YYYY-MM-DD" in str(error)
+        else:
+            raise AssertionError("Expected malformed waiver_review_as_of rejection.")
+
+
 def test_gate_writes_unique_artifacts_for_multiple_policies(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
@@ -1161,6 +1412,39 @@ def test_promote_candidate_version_rejects_stale_coverage_digest(tmp_path: Path)
             assert "coverage digest is stale" in str(error)
         else:
             raise AssertionError("Expected stale coverage digest rejection.")
+
+
+def test_promote_candidate_version_rejects_failing_waiver_review_policy(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        proposal = write_proposal(tmp_path)
+        candidate_path = create_candidate_version(parent="H0", candidate="H1", proposal_path=proposal)
+        manifest = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json")
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        gate = write_promote_composite_gate(
+            tmp_path,
+            candidate_digest=harness_behavior_digest(read_json(candidate_path)),
+            benchmark="sim-v0",
+            suite_version=manifest["suite_version"],
+            suite_digest=manifest["suite_digest"],
+            coverage_digest=coverage["coverage_digest"],
+            current_coverage_digest=coverage["coverage_digest"],
+            coverage_policy_digest=coverage["coverage_policy_digest"],
+            waiver_review_policy={
+                "fail_on_overdue_waivers": True,
+                "waiver_review_as_of": "2026-10-01",
+                "waiver_due_within_days": 30,
+            },
+        )
+
+        try:
+            promote_candidate_version(candidate="H1", gate_path=gate)
+        except RuntimeError as error:
+            assert "waiver review policy is failing" in str(error)
+        else:
+            raise AssertionError("Expected failing waiver review policy rejection.")
 
 
 def test_promote_candidate_version_rejects_missing_child_gate(tmp_path: Path) -> None:
@@ -1585,6 +1869,42 @@ def test_write_composite_gate_rejects_suite_digest_mismatch(tmp_path: Path) -> N
             raise AssertionError("Expected suite digest mismatch rejection.")
 
 
+def test_write_composite_gate_rejects_waiver_review_policy_mismatch(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        heldout = write_gate(
+            tmp_path,
+            name="heldout-gate.json",
+            split="heldout",
+            waiver_review_policy={
+                "fail_on_overdue_waivers": True,
+                "waiver_review_as_of": "2026-06-19",
+                "waiver_due_within_days": 30,
+            },
+        )
+        regression = write_gate(
+            tmp_path,
+            name="regression-gate.json",
+            split="regression",
+            waiver_review_policy={
+                "fail_on_overdue_waivers": True,
+                "waiver_review_as_of": "2026-10-01",
+                "waiver_due_within_days": 30,
+            },
+        )
+        try:
+            write_composite_gate(
+                heldout_gate=heldout,
+                regression_gate=regression,
+                decision="promote",
+            )
+        except RuntimeError as error:
+            assert "waiver review policies" in str(error)
+        else:
+            raise AssertionError("Expected waiver review policy mismatch rejection.")
+
+
 def test_write_composite_gate_rejects_promote_when_component_rejects(tmp_path: Path) -> None:
     with working_dir(tmp_path):
         heldout = write_gate(tmp_path, name="heldout-gate.json", split="heldout")
@@ -1810,6 +2130,8 @@ def write_gate(
     coverage_digest: str | None = None,
     current_coverage_digest: str | None = None,
     coverage_policy_digest: str | None = None,
+    waiver_review_policy: dict[str, object] | None = None,
+    waiver_review: dict[str, object] | None = None,
 ) -> Path:
     gate = path / ".rsi" / "gates" / name
     payload = {
@@ -1826,6 +2148,8 @@ def write_gate(
         "coverage_digest": coverage_digest,
         "current_coverage_digest": current_coverage_digest,
         "coverage_policy_digest": coverage_policy_digest,
+        "waiver_review_policy": waiver_review_policy,
+        "waiver_review": waiver_review,
         "evaluator_digests": [f"{split}-evaluator"],
         "pass_rate_delta": 0.1,
     }
@@ -1845,6 +2169,8 @@ def write_promote_composite_gate(
     coverage_digest: str | None = None,
     current_coverage_digest: str | None = None,
     coverage_policy_digest: str | None = None,
+    waiver_review_policy: dict[str, object] | None = None,
+    waiver_review: dict[str, object] | None = None,
 ) -> Path:
     heldout = write_gate(
         path,
@@ -1857,6 +2183,8 @@ def write_promote_composite_gate(
         coverage_digest=coverage_digest,
         current_coverage_digest=current_coverage_digest,
         coverage_policy_digest=coverage_policy_digest,
+        waiver_review_policy=waiver_review_policy,
+        waiver_review=waiver_review,
     )
     regression = write_gate(
         path,
@@ -1869,6 +2197,8 @@ def write_promote_composite_gate(
         coverage_digest=coverage_digest,
         current_coverage_digest=current_coverage_digest,
         coverage_policy_digest=coverage_policy_digest,
+        waiver_review_policy=waiver_review_policy,
+        waiver_review=waiver_review,
     )
     split_audit = write_fake_split_isolation_audit(path)
     return write_composite_gate(
