@@ -54,7 +54,9 @@ Initial environments:
 - `data_ops`: reason about schemas and data assets.
 - `tool_use`: validate tool access and observation loops.
 - `customer_support`: follow policy-like artifacts.
-- `world_model_static`: test state consistency in simulated environments.
+- `world_model_static`: test rollout-shaped static traces for state
+  consistency, drift, impossible transitions, reset/replay, intervention choice,
+  and rollout summaries.
 - `mechanics`: protect basic regression behavior.
 
 `sim-v0` is the first named version of this level. Its source files live under
@@ -120,6 +122,11 @@ visible in `coverage.json` and gate artifacts without blocking promotion by
 themselves. Waiver metadata is strict: missing `reason`, `owner`,
 `tracking_ref`, or `review_by` rejects the suite policy, as do duplicate waiver
 cells, unknown waiver keys, and required/waiver overlap.
+
+CM-0013 promotes several `world_model_static` trace families into required
+coverage: rollout summarization in train, reset/replay in heldout and
+regression, and drift detection in regression. This changes local measurement
+coverage, not the external benchmark adapter boundary.
 
 ## Evaluator And Suite Digests
 
@@ -311,9 +318,9 @@ consistency, detect incoherence, choose interventions, and improve rollout
 policy without changing the underlying world model?
 
 The current repo only models this with static text probes in
-`world_model_static`. That is intentional for now: the next useful step is to
-make trace identity, evaluator identity, and coverage visible before adding a
-live simulator adapter.
+`world_model_static`. CM-0013 adds rollout-shaped static trace cases, while
+still keeping the live simulator adapter out of scope until trace identity,
+evaluator identity, coverage, waiver review, and gate digests are stable.
 
 Initial synthetic probes:
 

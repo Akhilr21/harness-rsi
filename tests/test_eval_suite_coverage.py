@@ -178,10 +178,27 @@ def test_sim_v0_materialized_coverage_reports_family_matrix(tmp_path: Path) -> N
             "impossible_transition",
             "promoted_behavior",
             "regex_eval",
+            "reset_replay",
+            "rollout_summarization",
         }
-        assert split_families["train"] >= {"failure_signal", "policy_following"}
-        assert split_families["heldout"] >= {"impossible_transition", "tool_sequence"}
-        assert split_families["regression"] >= {"promoted_behavior", "exact_eval"}
+        assert split_families["train"] >= {
+            "failure_signal",
+            "policy_following",
+            "rollout_summarization",
+            "reset_replay",
+        }
+        assert split_families["heldout"] >= {
+            "impossible_transition",
+            "reset_replay",
+            "rollout_summarization",
+            "tool_sequence",
+        }
+        assert split_families["regression"] >= {
+            "drift_detection",
+            "exact_eval",
+            "promoted_behavior",
+            "reset_replay",
+        }
         assert coverage["family_split_counts"]["failure_signal"] == {
             "train": 1,
             "heldout": 0,
@@ -190,6 +207,12 @@ def test_sim_v0_materialized_coverage_reports_family_matrix(tmp_path: Path) -> N
         assert coverage["environment_family_matrix"]["coding_micro"]["failure_signal"][
             "train"
         ] == 1
+        assert coverage["environment_family_matrix"]["world_model_static"][
+            "reset_replay"
+        ] == {"heldout": 1, "regression": 1, "train": 1}
+        assert coverage["environment_family_matrix"]["world_model_static"][
+            "rollout_summarization"
+        ] == {"heldout": 1, "regression": 0, "train": 1}
         assert {"name": "failure_signal", "split": "heldout"} in coverage[
             "missing_family_splits"
         ]

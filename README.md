@@ -96,9 +96,10 @@ harness-rsi benchmark run --benchmark sim-v0 --split heldout --harness H0 --mock
 ```
 
 `sim-v0` currently covers knowledge work, coding microtasks, data operations,
-customer support, static world-model traces, and regression mechanics. Its gate
-policy can reject a candidate when an aggregate score is flat or improved but a
-protected environment regresses.
+customer support, static Decart/Oasis-style rollout trace cases under
+`world_model_static`, and regression mechanics. These are local deterministic
+fixtures. Its gate policy can reject a candidate when an aggregate score is flat
+or improved but a protected environment regresses.
 
 Promote the existing candidate only after a promote gate:
 
@@ -142,9 +143,10 @@ metric-delta evidence.
 benchmark. It is local, deterministic, and cheap enough to run during harness
 iterations.
 
-The committed suite starts with hand-authored probes and regression seeds. The
-roadmap is to add sanitized real traces and public benchmark miniatures next.
-Each task records its environment, family, split, and deterministic evaluator.
+The committed suite starts with hand-authored probes and regression seeds,
+including static rollout-trace cases for world-model pressure. The roadmap is to
+add sanitized real traces and public benchmark miniatures next. Each task
+records its environment, family, split, and deterministic evaluator.
 
 The split contract stays strict:
 
@@ -196,8 +198,9 @@ improvements in recovery, state tracking, tool use, triage, retries, and cost.
 The current Decart-style world-model coverage is represented by static
 `world_model_static` tasks in `sim-v0`; live simulator or external world-model
 adapters should wait until suite/evaluator digests and coverage reporting are in
-place and stable. Gates also reject coverage-policy drift between run time and
-gate time.
+place and stable. No live simulator, external world-model adapter, or
+Decart/Oasis runtime validation has been exercised yet. Gates also reject
+coverage-policy drift between run time and gate time.
 
 ## Artifact layout
 

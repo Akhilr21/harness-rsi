@@ -62,9 +62,33 @@
       },
       {
         "environment": "world_model_static",
+        "family": "rollout_summarization",
+        "split": "train",
+        "reason": "World-model harness proposals need trace summarization evidence before live simulator adapters."
+      },
+      {
+        "environment": "world_model_static",
         "family": "impossible_transition",
         "split": "heldout",
         "reason": "World-model validation must detect impossible transitions."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "reset_replay",
+        "split": "heldout",
+        "reason": "World-model validation must preserve reset/replay comparability across traces."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "drift_detection",
+        "split": "regression",
+        "reason": "World-model drift detection needs protected regression pressure."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "reset_replay",
+        "split": "regression",
+        "reason": "World-model reset/replay discipline must not regress once introduced."
       },
       {
         "environment": "world_model_static",

@@ -448,3 +448,52 @@ pressures explicit before a candidate can be promoted.
   list active waivers by owner/review date, then expand `world_model_static`
   with Decart-style rollout trace cases so the most important world-model
   waivers can be retired or promoted into required cells.
+
+## CM-0013: Static World-Model Rollout Trace Cases
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/sources/train/world_model_static.jsonl`,
+  `benchmarks/sim-v0/sources/heldout/world_model_static.jsonl`,
+  `benchmarks/sim-v0/sources/regression/world_model_static.jsonl`,
+  `benchmarks/sim-v0/manifest.json`, `tests/test_harness.py`,
+  `tests/test_eval_suite_coverage.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: world-model pressure can start as deterministic trace evaluation
+  before the harness integrates a live simulator. Static rollout-shaped tasks
+  should let the suite measure state tracking, drift detection, reset/replay,
+  intervention choice, and rollout summarization while preserving the fixed
+  model and digest-backed promotion contract.
+- Change made: expanded `world_model_static` with six static rollout trace
+  cases across train, heldout, and regression. Added source rows for rollout
+  summaries, reset/replay comparability, and protected drift/reset regression
+  cases. Updated `coverage_policy.required` so rollout summarization, heldout
+  reset/replay, regression drift detection, and regression reset/replay are now
+  explicit coverage requirements. `sim-v0` now materializes 33 tasks across
+  train, heldout, and regression.
+- Gate enforcement: no new gate type was added. The existing coverage gate now
+  fails closed if any of the new world-model required cells disappear, and the
+  existing suite and coverage digests make task or evaluator changes visible in
+  run and gate artifacts.
+- Frontier/world-model note: these are Decart/Oasis-style static rollout trace
+  fixtures, not live simulator validation. No external world-model adapter,
+  Decart/Oasis runtime, or simulator process was exercised. The value is that
+  frontier-model runs now face local trace-shaped pressure before they can claim
+  harness-level improvement on world-model-adjacent behavior.
+- Validation run: `pytest` reported 51 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0`, regenerated
+  coverage, ran heldout twice, and wrote a gate with 33 total suite tasks, 12
+  heldout tasks, 14 required coverage cells, no missing required cells, and four
+  `world_model_static` heldout tasks.
+- Observation: `world_model_static` now makes state consistency, drift
+  detection, impossible transitions, intervention selection, reset/replay, and
+  rollout summarization visible in local coverage and gate artifacts. This is
+  deterministic fixture validation only.
+- Learning: world-model pressure can be represented as trace evaluation before
+  simulator integration. Static rollout-shaped tasks strengthen the harness's
+  state-tracking and intervention-policy evaluation while preserving the local
+  suite contract. They do not prove live simulator performance.
+- Remediation: review the new `world_model_static` coverage cells after several
+  experiment cycles, then decide which additional world-model families should
+  become required in a later suite version. Add a waiver lifecycle report and
+  composite-gate digest-boundary tests before any live simulator adapter.

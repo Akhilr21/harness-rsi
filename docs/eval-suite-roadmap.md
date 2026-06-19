@@ -29,6 +29,9 @@ should grow toward four source classes:
 - **Hand-authored probes**: small tasks that exercise known harness surfaces such
   as instruction parsing, tool use, state tracking, retry behavior, and evaluator
   mechanics.
+- **Static rollout trace cases**: deterministic world-model-style traces that
+  exercise state consistency, drift detection, intervention choice, reset/replay,
+  and rollout summaries without ingesting a live simulator runtime.
 - **Sanitized real traces**: distilled tasks from Codex-style work traces,
   local CLI failures, customer-support style interactions, and world-model
   rollouts, with secrets and private details removed before inclusion.
@@ -54,6 +57,8 @@ CM-0009 already gives `sim-v0` a committed manifest, source rows, split
 materialization, family labels, and a gate policy. The next increment should make
 those identities visible in reports and artifacts rather than adding a second
 runner.
+CM-0013 expands the local source data with static rollout trace cases only; live
+rollout ingestion remains a future adapter problem.
 
 ## Split Contract
 
@@ -120,6 +125,11 @@ with optional `expires_when` text for the condition that should retire the
 waiver. Duplicate waiver identities, unknown waiver keys, and required/waiver
 overlap are rejected as malformed suite policy.
 
+CM-0013 adds required `world_model_static` coverage for
+`rollout_summarization`, heldout and regression `reset_replay`, and regression
+`drift_detection`. These cells are intentionally required now because they are
+cheap deterministic traces and are central to later world-model adapter claims.
+
 Rejected candidates should update the matrix. The point is not only to improve
 the next prompt; it is to make the next evaluation harder in the exact place the
 candidate failed.
@@ -185,7 +195,7 @@ it changes where improvement is likely to show up:
 - better memory and context selection
 - better state tracking across longer traces
 
-Decart/Oasis-style world-model use cases should start as trace-evaluation
+Decart/Oasis-style world-model use cases now start as static trace-evaluation
 problems, not live simulator integration. The current local proxy is
 `world_model_static`, with families such as state consistency, drift detection,
 impossible transitions, intervention selection, rollout summarization, and
@@ -245,14 +255,16 @@ profile materialization, split metadata, per-environment scores, and
 suite/evaluator/coverage identity propagation. CM-0011 added required and
 waived coverage cells and gate enforcement for missing required coverage.
 CM-0012 added strict waiver metadata and coverage-digest drift rejection.
+CM-0013 added static Decart/Oasis-style rollout trace cases and promoted key
+world-model trace families into required coverage.
 
 The next increment should target:
 
-1. Expand `world_model_static` toward Decart-style rollout trace cases while
-   keeping the adapter local and deterministic.
-2. Add a waiver lifecycle report or command grouped by owner and review date.
-3. Add digest mismatch tests at the composite-gate and promotion boundary.
-4. Decide when efficiency thresholds are reliable enough to gate attempts,
+1. Add a waiver lifecycle report or command grouped by owner and review date.
+2. Add digest mismatch tests at the composite-gate and promotion boundary.
+3. Decide when efficiency thresholds are reliable enough to gate attempts,
    duration, tool calls, and cost.
-5. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
+4. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
+5. Keep live simulator or world-model adapters behind stable local trace
+   coverage, waiver review, and digest-boundary tests.

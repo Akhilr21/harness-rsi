@@ -60,9 +60,11 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         assert manifest["profile"] == "sim-v0"
         assert manifest["suite_version"] == "sim-v0.1"
         assert manifest["suite_digest"]
-        assert manifest["split_counts"] == {"heldout": 10, "regression": 7, "train": 10}
+        assert manifest["split_counts"] == {"heldout": 12, "regression": 9, "train": 12}
         assert "world_model_static" in manifest["environments"]
         assert "impossible_transition" in manifest["families"]
+        assert "rollout_summarization" in manifest["families"]
+        assert "reset_replay" in manifest["families"]
         assert (root / "gate_policy.json").exists()
         heldout = read_jsonl(root / "heldout.jsonl")
         heldout_task = next(row for row in heldout if row["id"] == "kw_heldout_decision_001")
@@ -71,10 +73,24 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         assert heldout_task["evaluator_digest"] == evaluator_digest(heldout_task["eval"])
         coverage = read_json(root / "coverage.json")
         assert coverage["suite_digest"] == manifest["suite_digest"]
-        assert coverage["split_counts"] == {"heldout": 10, "regression": 7, "train": 10}
+        assert coverage["split_counts"] == {"heldout": 12, "regression": 9, "train": 12}
         assert coverage["environment_family_matrix"]["world_model_static"][
             "impossible_transition"
         ]["heldout"] == 1
+        assert coverage["environment_family_matrix"]["world_model_static"][
+            "rollout_summarization"
+        ] == {"heldout": 1, "regression": 0, "train": 1}
+        assert coverage["environment_family_matrix"]["world_model_static"][
+            "reset_replay"
+        ] == {"heldout": 1, "regression": 1, "train": 1}
+        assert {
+            "environment": "world_model_static",
+            "family": "reset_replay",
+            "split": "regression",
+            "reason": "World-model reset/replay discipline must not regress once introduced.",
+            "count": 1,
+            "status": "covered_required",
+        } in coverage["required_cells"]
         assert coverage["coverage_policy"]["fail_on_missing_required"] is True
         assert not coverage["missing_required_cells"]
         assert {
@@ -98,12 +114,14 @@ def test_benchmark_coverage_command_writes_report(tmp_path: Path, capsys) -> Non
         assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
         assert main(["benchmark", "coverage", "--benchmark", "sim-v0"]) == 0
         output = capsys.readouterr().out
+        assert "Task count: 33" in output
+        assert "Required cells: 14" in output
         assert "Missing required cells: 0" in output
         assert "Waived missing cells: 4" in output
         assert "Unclassified missing cells:" in output
         assert "environment_family_matrix" not in output
         coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
-        assert coverage["task_count"] == 27
+        assert coverage["task_count"] == 33
         assert coverage["environment_split_counts"]["knowledge_work"] == {
             "heldout": 2,
             "regression": 2,
@@ -129,6 +147,7 @@ def test_sim_v0_gate_passes_with_waived_missing_coverage(tmp_path: Path) -> None
         gate = read_json(gate_path)
         assert gate["decision"] == "promote"
         assert gate["coverage_failures"] == []
+        assert gate["missing_required_cells"] == []
         assert gate["coverage_policy_digest"]
         assert {
             "environment": "data_ops",
