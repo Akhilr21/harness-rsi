@@ -78,6 +78,29 @@ rollout can mask impossible transitions, drift, bad intervention selection, or
 reset/replay errors. Required and waived coverage cells make those evaluation
 pressures explicit before a candidate can be promoted.
 
+## Efficiency Policy Expectations
+
+Efficiency is part of the harness-level improvement claim. A candidate that
+keeps score flat by spending more attempts, tools, time, or cost may be a worse
+harness even if the model is unchanged.
+
+Every efficiency-policy increment should record:
+
+- metric source and reliability class, such as deterministic attempts,
+  deterministic tool calls, noisy local duration, or unavailable provider cost
+- thresholds by split and gate scope
+- whether missing metric values fail closed or remain evidence-only
+- artifact changes to gates, composite gates, cycle summaries, rejection
+  artifacts, and promoted harness lineage
+- why duration or cost is being enforced now or intentionally left opt-in
+- frontier/world-model implications, especially whether a candidate is spending
+  more search or rollout analysis to appear better
+
+Attempts and tool calls are reliable enough for local `sim-v0` policy gates.
+Duration remains noisy in local tests, and cost remains unavailable until
+provider usage accounting lands. If a policy configures a metric whose value is
+missing, the gate should fail closed instead of silently ignoring the threshold.
+
 ## CM-0001: Minimal CLI Skeleton
 
 - Date: 2026-06-15
@@ -634,3 +657,49 @@ pressures explicit before a candidate can be promoted.
 - Remediation: next decide whether efficiency metrics are reliable enough to
   become gate inputs, and separately decide whether overdue waiver lifecycle
   states should remain audit-only or become promotion policy.
+
+## CM-0017: Efficiency Gate Policy
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/gate_policy.json`,
+  `src/harness_rsi/benchmarks.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: harness-level RSI should not promote candidates that preserve or
+  improve score only by spending more attempts, tool calls, time, or cost. The
+  fixed-model claim needs an efficiency boundary in addition to correctness,
+  coverage, split-isolation, and digest boundaries.
+- Change made: split `gate_policy.json` entries can now configure
+  `max_attempt_delta`, `max_tool_call_delta`, `max_duration_ms_delta`, and
+  `max_cost_usd_delta`. Gates write `efficiency_thresholds` and
+  `efficiency_failures`, and reject candidates when configured metrics exceed
+  their allowed delta. Missing configured metrics fail closed with
+  `metric_unavailable`. `sim-v0` now enforces `max_attempt_delta: 0` and
+  `max_tool_call_delta: 0` for heldout and regression gates, while leaving
+  duration and cost unset by default.
+- Gate enforcement: promotion semantics changed for source-backed `sim-v0`
+  gates. A candidate can no longer promote on heldout/regression if it uses more
+  attempts or tool calls than the baseline, even with the same pass rate.
+  Duration and cost are supported but opt-in.
+- Frontier/world-model note: frontier models and Decart/Oasis-style world-model
+  harnesses can appear better by spending more retries, search, tool use, or
+  rollout analysis. Attempts/tool-call gates are the first reliable local check
+  that a harness improvement is not just hidden extra compute. Duration remains
+  noisy locally, and cost should wait for provider usage accounting.
+- Validation run: `pytest` reported 76 passing tests; `ruff check .` passed;
+  `git diff --check` passed. CLI smoke materialized `sim-v0` in `/private/tmp`,
+  ran two equal mock heldout runs, and wrote a gate with
+  `efficiency_thresholds` set to `attempts=0`, `tool_calls=0`,
+  `duration_ms=null`, `cost_usd=null`, no `efficiency_failures`, and decision
+  `promote`.
+- Observation: metrics already existed in run, comparison, gate, and decision
+  artifacts, but they were mostly passive evidence. A flat score with higher
+  attempts or tool calls could still pass unless a reviewer manually noticed the
+  metric deltas.
+- Learning: efficiency is a harness-level RSI signal only when measured under
+  the same model, split, suite, coverage policy, and split-isolation boundary.
+  Attempts and tool calls are deterministic enough for `sim-v0`; duration and
+  cost need stronger measurement before default enforcement.
+- Remediation: next decide whether overdue waiver lifecycle states should become
+  promotion policy, then keep external adapters read-only until local gates are
+  stable under repeated cycles.

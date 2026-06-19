@@ -133,9 +133,11 @@ writes a composite gate, and promotes the candidate only when both heldout and
 regression gates pass.
 
 Runs and gates also record per-environment scores, attempt counts, tool-call
-counts, duration, and nullable cost placeholders. Rejected cycles write a
-decision artifact under `.rsi/decisions/` with proposal, gate, score-delta, and
-metric-delta evidence.
+counts, duration, and nullable cost placeholders. Gate policy can enforce
+attempt and tool-call deltas today; duration and cost thresholds are explicit
+opt-in because duration is noisy locally and provider cost is not collected yet.
+Rejected cycles write a decision artifact under `.rsi/decisions/` with proposal,
+gate, score-delta, and metric-delta evidence.
 
 ## Enhanced Eval Suite
 
@@ -161,9 +163,10 @@ the train source run, proposal evidence task IDs, validation task IDs, leaked
 validation-reference scan results, and a split-isolation digest. Composite gates
 carry that audit digest, and promotion requires a passing, untampered audit.
 
-Gates now support aggregate pass-rate thresholds, regression-drop tolerance, and
-per-environment maximum drops. The roadmap is to add failure-family coverage and
-eventually efficiency thresholds for attempts, tool calls, duration, and cost.
+Gates now support aggregate pass-rate thresholds, regression-drop tolerance,
+per-environment maximum drops, required coverage, split-isolation evidence, and
+efficiency thresholds. `sim-v0` enforces no additional attempts or tool calls
+for heldout/regression gates, while duration and cost remain unset by default.
 
 The reporting and identity layer is also part of the harness now. `sim-v0`
 materialization writes `coverage.json`, and the report can be regenerated with:

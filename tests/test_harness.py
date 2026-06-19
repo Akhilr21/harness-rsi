@@ -71,6 +71,15 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         assert "rollout_summarization" in manifest["families"]
         assert "reset_replay" in manifest["families"]
         assert (root / "gate_policy.json").exists()
+        gate_policy = read_json(root / "gate_policy.json")
+        assert gate_policy["heldout"]["max_attempt_delta"] == 0
+        assert gate_policy["heldout"]["max_tool_call_delta"] == 0
+        assert "max_duration_ms_delta" not in gate_policy["heldout"]
+        assert "max_cost_usd_delta" not in gate_policy["heldout"]
+        assert gate_policy["regression"]["max_attempt_delta"] == 0
+        assert gate_policy["regression"]["max_tool_call_delta"] == 0
+        assert "max_duration_ms_delta" not in gate_policy["regression"]
+        assert "max_cost_usd_delta" not in gate_policy["regression"]
         heldout = read_jsonl(root / "heldout.jsonl")
         heldout_task = next(row for row in heldout if row["id"] == "kw_heldout_decision_001")
         assert heldout_task["split"] == "heldout"
@@ -593,6 +602,159 @@ def test_gate_rejects_environment_drop_with_flat_aggregate(tmp_path: Path) -> No
                 "environment": "knowledge_work",
                 "max_environment_drop": 0,
                 "pass_rate_delta": -1.0,
+            }
+        ]
+
+
+def test_gate_rejects_attempt_regression_from_policy(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {"heldout": {"min_pass_rate_delta": 0, "max_attempt_delta": 0}},
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", attempts=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", attempts=3)
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["pass_rate_delta"] == 0
+        assert gate["metric_deltas"]["attempts"] == 1
+        assert gate["efficiency_thresholds"]["attempts"] == 0
+        assert gate["decision"] == "reject"
+        assert gate["efficiency_failures"] == [
+            {
+                "metric": "attempts",
+                "max_delta": 0.0,
+                "delta": 1,
+                "status": "efficiency_regression",
+            }
+        ]
+
+
+def test_gate_rejects_tool_call_regression_from_policy(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {"heldout": {"min_pass_rate_delta": 0, "max_tool_call_delta": 0}},
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", tool_calls=0)
+        candidate_run = write_fake_run(tmp_path / "candidate", tool_calls=1)
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["metric_deltas"]["tool_calls"] == 1
+        assert gate["decision"] == "reject"
+        assert gate["efficiency_failures"] == [
+            {
+                "metric": "tool_calls",
+                "max_delta": 0.0,
+                "delta": 1,
+                "status": "efficiency_regression",
+            }
+        ]
+
+
+def test_gate_allows_equal_efficiency_under_policy(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {
+                "heldout": {
+                    "min_pass_rate_delta": 0,
+                    "max_attempt_delta": 0,
+                    "max_tool_call_delta": 0,
+                }
+            },
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", attempts=2, tool_calls=1)
+        candidate_run = write_fake_run(tmp_path / "candidate", attempts=2, tool_calls=1)
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["metric_deltas"]["attempts"] == 0
+        assert gate["metric_deltas"]["tool_calls"] == 0
+        assert gate["efficiency_failures"] == []
+
+
+def test_gate_rejects_unavailable_cost_when_cost_policy_is_configured(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {"heldout": {"min_pass_rate_delta": 0, "max_cost_usd_delta": 0}},
+        )
+        baseline_run = write_fake_run(tmp_path / "baseline", cost_usd=None)
+        candidate_run = write_fake_run(tmp_path / "candidate", cost_usd=None)
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["metric_deltas"]["cost_usd"] is None
+        assert gate["decision"] == "reject"
+        assert gate["efficiency_failures"] == [
+            {
+                "metric": "cost_usd",
+                "max_delta": 0.0,
+                "delta": None,
+                "status": "metric_unavailable",
+            }
+        ]
+
+
+def test_gate_rejects_duration_regression_from_policy(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[])
+        baseline_run = write_fake_run(tmp_path / "baseline", duration_ms=1.0)
+        candidate_run = write_fake_run(tmp_path / "candidate", duration_ms=2.0)
+        evidence_only_gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        evidence_only_gate = read_json(evidence_only_gate_path)
+        assert evidence_only_gate["decision"] == "promote"
+        assert evidence_only_gate["metric_deltas"]["duration_ms"] == 1.0
+        assert evidence_only_gate["efficiency_thresholds"]["duration_ms"] is None
+
+        write_json(
+            tmp_path / ".rsi" / "benchmarks" / "fake" / "gate_policy.json",
+            {"heldout": {"min_pass_rate_delta": 0, "max_duration_ms_delta": 0.5}},
+        )
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["metric_deltas"]["duration_ms"] == 1.0
+        assert gate["decision"] == "reject"
+        assert gate["efficiency_failures"] == [
+            {
+                "metric": "duration_ms",
+                "max_delta": 0.5,
+                "delta": 1.0,
+                "status": "efficiency_regression",
             }
         ]
 
@@ -1453,9 +1615,14 @@ def write_fake_run(
     task_digest: str = "same-tasks",
     split: str = "heldout",
     coverage_digest: str | None = None,
+    attempts: int | None = None,
+    tool_calls: int = 0,
+    duration_ms: float = 1,
+    cost_usd: float | None = None,
 ) -> Path:
     path.mkdir(parents=True)
     write_json(path / "harness.snapshot.json", {"model": model})
+    attempts = attempts if attempts is not None else task_count
     results = []
     for index in range(task_count):
         results.append(
@@ -1478,6 +1645,15 @@ def write_fake_run(
             "tasks": task_count,
             "passed": passed,
             "pass_rate": passed / task_count,
+            "attempts": attempts,
+            "tool_calls": tool_calls,
+            "duration_ms": duration_ms,
+            "metrics": {
+                "attempts": attempts,
+                "tool_calls": tool_calls,
+                "duration_ms": duration_ms,
+                "cost_usd": cost_usd,
+            },
             "results": results,
         },
     )

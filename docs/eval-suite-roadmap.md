@@ -185,8 +185,8 @@ layers:
   behavior
 - failure-family coverage minimums for environments that are gate-enforced
 - coverage digest consistency between run time and gate time
-- efficiency thresholds for attempts, tool calls, duration, and cost once those
-  fields are reliable enough to gate on
+- efficiency thresholds for attempts, tool calls, duration, and cost when those
+  fields are configured and reliable enough to gate on
 
 Per-environment gating prevents an aggregate win from hiding a localized failure.
 A candidate that improves `knowledge_work` should not be promoted if it breaks
@@ -209,6 +209,10 @@ identities, and candidate behavior digests, and promotion requires a composite
 heldout+regression gate with untampered child gate digests. This is a gate
 semantic change: old single-split promote gates are no longer sufficient
 promotion evidence.
+CM-0017 adds efficiency gates. `sim-v0` enforces no additional attempts and no
+additional tool calls for heldout/regression gates. Duration and cost thresholds
+remain explicit opt-in because local duration is noisy and provider cost is not
+collected yet; if configured while unavailable, they fail closed.
 
 ## Frontier And World-Model Pressure
 
@@ -289,14 +293,14 @@ changing promotion semantics.
 CM-0015 added composite-gate and promotion-boundary digest checks.
 CM-0016 added train-only proposal evidence manifests and split-isolation audit
 gates.
+CM-0017 added attempts/tool-call efficiency gates and opt-in duration/cost
+thresholds.
 
 The next increment should target:
 
-1. Decide when efficiency thresholds are reliable enough to gate attempts,
-   duration, tool calls, and cost.
-2. Decide whether overdue waiver lifecycle states should become a future gate
+1. Decide whether overdue waiver lifecycle states should become a future gate
    policy or stay audit-only.
-3. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
+2. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
-4. Keep live simulator or world-model adapters behind stable local trace
+3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.

@@ -182,9 +182,8 @@ Required checks:
 - regression score does not drop beyond tolerance
 - trace artifacts remain inspectable
 
-The first implemented metric is pass rate. Later metrics should include cost,
-latency, retries, tool errors, failure-family coverage, and per-environment
-performance.
+The first implemented metric is pass rate. Efficiency metrics are now recorded
+and can be gate-enforced when a split policy configures thresholds.
 
 Current metric schema:
 
@@ -195,9 +194,11 @@ Current metric schema:
 - `metrics.duration_ms`: measured wall-clock runtime for local execution.
 - `metrics.cost_usd`: nullable placeholder until provider accounting is wired.
 
-Gates carry `metric_deltas` and `environment_scores`. Metric deltas are evidence
-fields for now. Environment scores can also become gating fields through
-`max_environment_drop` or a benchmark `gate_policy.json`.
+Gates carry `metric_deltas` and `environment_scores`. Environment scores can
+become gating fields through `max_environment_drop` or a benchmark
+`gate_policy.json`. Efficiency deltas can become gating fields through
+`max_attempt_delta`, `max_tool_call_delta`, `max_duration_ms_delta`, and
+`max_cost_usd_delta`.
 
 Current gate policy can enforce:
 
@@ -207,11 +208,15 @@ Current gate policy can enforce:
 - protected environments can veto promotion even when aggregate score improves
 - required failure-family coverage must be present or explicitly waived
 - gate-time coverage digest must match the coverage digest recorded by the runs
+- attempts and tool-call regressions can fail gates when configured
+- duration and cost regressions can fail gates when explicitly configured
 
-Roadmap policy should add:
-
-- efficiency thresholds can gate attempts, tool calls, duration, and cost once
-  those measurements are reliable enough
+`sim-v0` currently enforces `max_attempt_delta: 0` and
+`max_tool_call_delta: 0` for heldout and regression gates. Duration remains
+unset by default because local wall-clock timing is noisy. Cost remains unset
+because provider usage is not collected yet. If a split policy configures a
+threshold for a metric whose value is unavailable, the gate fails closed with
+`metric_unavailable`.
 
 This prevents an aggregate win from masking a local failure in a protected
 environment. It also prevents a candidate from being promoted against coverage

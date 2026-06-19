@@ -454,10 +454,15 @@ def gate_candidate(
         expected_coverage_digest=comparison.get("coverage_digest"),
     )
     coverage_failures = coverage_evidence["coverage_failures"]
+    efficiency_failures = find_efficiency_failures(
+        comparison["metric_deltas"],
+        thresholds["efficiency_thresholds"],
+    )
     passed = (
         delta >= thresholds["min_delta"]
         and not environment_failures
         and not coverage_failures
+        and not efficiency_failures
     )
     decision = {
         **comparison,
@@ -466,15 +471,20 @@ def gate_candidate(
         "min_pass_rate_delta": thresholds["min_pass_rate_delta"],
         "max_allowed_drop": thresholds["max_allowed_drop"],
         "max_environment_drop": thresholds["max_environment_drop"],
+        "efficiency_thresholds": thresholds["efficiency_thresholds"],
         "effective_min_delta": thresholds["min_delta"],
         "protected_environments": thresholds["protected_environments"],
         "environment_failures": environment_failures,
+        "efficiency_failures": efficiency_failures,
         **coverage_evidence,
         "decision": "promote" if passed else "reject",
         "rationale": (
             "Candidate met pass-rate gate."
             if passed
-            else "Candidate failed pass-rate, regression, environment, or coverage gate."
+            else (
+                "Candidate failed pass-rate, regression, environment, coverage, "
+                "or efficiency gate."
+            )
         ),
     }
     decided_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -507,6 +517,7 @@ def resolve_gate_thresholds(
     policy_environment_drop = policy.get("max_environment_drop", max_environment_drop)
     if policy_environment_drop is not None:
         policy_environment_drop = float(policy_environment_drop)
+    efficiency_thresholds = resolve_efficiency_thresholds(policy)
 
     min_delta = policy_min if policy_min > 0 else -policy_drop
     if split == "regression" and policy_min == 0:
@@ -522,8 +533,24 @@ def resolve_gate_thresholds(
         "min_pass_rate_delta": policy_min,
         "max_allowed_drop": policy_drop,
         "max_environment_drop": policy_environment_drop,
+        "efficiency_thresholds": efficiency_thresholds,
         "protected_environments": protected_environments,
     }
+
+
+def resolve_efficiency_thresholds(policy: dict[str, Any]) -> dict[str, float | None]:
+    return {
+        "attempts": optional_float(policy.get("max_attempt_delta")),
+        "tool_calls": optional_float(policy.get("max_tool_call_delta")),
+        "duration_ms": optional_float(policy.get("max_duration_ms_delta")),
+        "cost_usd": optional_float(policy.get("max_cost_usd_delta")),
+    }
+
+
+def optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
 
 
 def find_environment_failures(
@@ -545,6 +572,37 @@ def find_environment_failures(
                     "environment": environment,
                     "pass_rate_delta": delta,
                     "max_environment_drop": max_environment_drop,
+                }
+            )
+    return failures
+
+
+def find_efficiency_failures(
+    metric_deltas: dict[str, float | int | None],
+    thresholds: dict[str, float | None],
+) -> list[dict[str, Any]]:
+    failures = []
+    for metric, max_delta in thresholds.items():
+        if max_delta is None:
+            continue
+        delta = metric_deltas.get(metric)
+        if delta is None:
+            failures.append(
+                {
+                    "metric": metric,
+                    "max_delta": max_delta,
+                    "delta": None,
+                    "status": "metric_unavailable",
+                }
+            )
+            continue
+        if delta > max_delta:
+            failures.append(
+                {
+                    "metric": metric,
+                    "max_delta": max_delta,
+                    "delta": delta,
+                    "status": "efficiency_regression",
                 }
             )
     return failures
