@@ -122,8 +122,9 @@ def benchmark_gate(args: argparse.Namespace) -> int:
 
 def benchmark_coverage(args: argparse.Namespace) -> int:
     path = write_coverage_report(args.benchmark)
+    report = read_json(path)
     print(f"Wrote coverage report to {path}")
-    print(readable_json(read_json(path)))
+    print(readable_coverage_summary(report))
     return 0
 
 
@@ -170,6 +171,31 @@ def readable_json(payload: object) -> str:
     import json
 
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def readable_coverage_summary(report: dict[str, object]) -> str:
+    lines = [
+        f"Benchmark: {report.get('benchmark')}",
+        f"Suite version: {report.get('suite_version')}",
+        f"Task count: {report.get('task_count')}",
+        f"Split counts: {readable_split_counts(report.get('split_counts', {}))}",
+        f"Required cells: {list_count(report.get('required_cells'))}",
+        f"Missing required cells: {list_count(report.get('missing_required_cells'))}",
+        f"Waived missing cells: {list_count(report.get('waived_missing_cells'))}",
+        f"Unclassified missing cells: {list_count(report.get('unclassified_missing_cells'))}",
+        f"Coverage digest: {report.get('coverage_digest')}",
+    ]
+    return "\n".join(lines)
+
+
+def readable_split_counts(value: object) -> str:
+    if not isinstance(value, dict):
+        return "unavailable"
+    return ", ".join(f"{split}={value[split]}" for split in sorted(value))
+
+
+def list_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

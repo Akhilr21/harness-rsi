@@ -196,6 +196,28 @@ def test_sim_v0_materialized_coverage_reports_family_matrix(tmp_path: Path) -> N
         assert coverage["coverage_digest"]
 
 
+def test_sim_v0_coverage_reports_required_and_waived_cells(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+
+        coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
+        required = coverage["required_cells"]
+        waived = coverage["waived_cells"]
+        missing_required = coverage["missing_required_cells"]
+        waived_missing = coverage["waived_missing_cells"]
+
+        assert required
+        assert waived
+        assert all(is_coverage_cell(cell) for cell in required)
+        assert all(is_coverage_cell(cell) and cell.get("reason") for cell in waived)
+        assert {cell_key(cell) for cell in waived}.isdisjoint(
+            {cell_key(cell) for cell in missing_required}
+        )
+        assert {cell_key(cell) for cell in waived_missing} <= {
+            cell_key(cell) for cell in waived
+        }
+
+
 def test_suite_and_evaluator_digests_are_stable_and_evaluator_sensitive() -> None:
     evaluator = {"type": "contains", "expected": "heldout"}
     same_evaluator_reordered = {"expected": "heldout", "type": "contains"}
@@ -313,6 +335,75 @@ def test_malformed_benchmark_source_rejects_duplicate_task_ids(tmp_path: Path, c
         assert "Duplicate task id duplicate-task in train split" in output.err
 
 
+def test_malformed_coverage_policy_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-coverage-policy" / "sources"
+        write_valid_source_profile(source)
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": {"environment": "knowledge_work"},
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "bad-coverage-policy",
+                    "--profile",
+                    "bad-coverage-policy",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "coverage" in output.err.lower()
+        assert "coverage_policy.required" in output.err
+
+
+def test_malformed_coverage_waiver_rejects_init(tmp_path: Path, capsys) -> None:
+    with working_dir(tmp_path):
+        source = tmp_path / "benchmarks" / "bad-coverage-waiver" / "sources"
+        write_valid_source_profile(source)
+        (source.parent / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "coverage_policy": {
+                        "required": [],
+                        "waivers": {"environment": "knowledge_work"},
+                    }
+                },
+                sort_keys=True,
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "init",
+                    "--name",
+                    "bad-coverage-waiver",
+                    "--profile",
+                    "bad-coverage-waiver",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "waiver" in output.err.lower()
+        assert "coverage_policy.waivers" in output.err
+
+
 def test_cli_main_smoke_for_benchmark_commands(tmp_path: Path, capsys) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init"]) == 0
@@ -349,6 +440,19 @@ def valid_task_line(task_id: str, split: str) -> str:
         },
         sort_keys=True,
     )
+
+
+def write_valid_source_profile(source: Path) -> None:
+    for split in ("train", "heldout", "regression"):
+        write_source_split(source, split, [valid_task_line(f"{split}-task", split)])
+
+
+def is_coverage_cell(cell: dict[str, object]) -> bool:
+    return {"environment", "family", "split"} <= set(cell)
+
+
+def cell_key(cell: dict[str, object]) -> tuple[object, object, object]:
+    return (cell["environment"], cell["family"], cell["split"])
 
 
 def source_task(task_id: str, split: str, evaluator: dict[str, str]) -> dict[str, object]:

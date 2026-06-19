@@ -105,16 +105,18 @@ The report is derived from the same source profile that
 `harness-rsi benchmark init --name sim-v0` materializes into
 `.rsi/benchmarks/sim-v0`. It shows an environment-by-family matrix for each
 split, task counts, split counts, evaluator digests, and explicit missing cells.
-A missing high-priority family should eventually be recorded as either:
+A missing high-priority family is recorded as either:
 
 - covered by at least one task in the split
 - intentionally waived with a reason
-- missing and therefore not ready for gate enforcement
+- missing required evidence that blocks gates
 
 This keeps coverage review separate from scoring. The current runner can execute
 tasks, enforce per-environment policy, and emit coverage reports. It does not
-yet fail gates on family coverage; missing cells are report-only until required
-cells and waivers are explicit.
+turn every sparse cell into a failure. Only cells listed as required in the
+coverage policy can fail a gate. Waived and unclassified missing cells remain
+visible in `coverage.json` and gate artifacts without blocking promotion by
+themselves.
 
 ## Evaluator And Suite Digests
 
@@ -177,10 +179,10 @@ Current gate policy can enforce:
 - aggregate regression drop must stay within tolerance
 - each gate-enforced environment must meet its floor or max-drop policy
 - protected environments can veto promotion even when aggregate score improves
+- required failure-family coverage must be present or explicitly waived
 
 Roadmap policy should add:
 
-- required failure-family coverage must be present or explicitly waived
 - efficiency thresholds can gate attempts, tool calls, duration, and cost once
   those measurements are reliable enough
 

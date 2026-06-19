@@ -40,6 +40,39 @@ definitions used by that run in place. Create a new suite version instead.
 PRs that change gate semantics should say so explicitly. PRs that only add
 coverage should still explain the source and failure family of the new cases.
 
+## Coverage Policy Expectations
+
+Coverage is now part of the measurement contract, not just a report. Before
+missing family coverage can fail a promotion gate, the suite must say which
+environment/family/split cells are required, intentionally waived, or
+report-only.
+
+Every coverage-policy increment should record:
+
+- required cells by environment, failure family, and split
+- waived cells with a short reason, owner, and review date or expiry condition
+- report-only cells that are useful to track but not ready to block promotion
+- how waiver metadata is stored, such as manifest fields or a separate waiver
+  file
+- which gates consume the coverage policy: heldout, regression, composite, or
+  promotion
+- whether missing required cells fail closed before score comparison, after
+  score comparison, or only at the composite-gate boundary
+- expected artifact changes to `coverage.json`, gate decisions, composite
+  gates, cycle summaries, rejection artifacts, and promoted harness lineage
+
+Missing required evidence should fail closed. A waived cell should be explicit
+evidence, not an absence that happens to pass. Waivers are acceptable only when
+they preserve the measurement claim for the suite version under review.
+
+This matters more, not less, for frontier-model and world-model work. Stronger
+frontier models can raise aggregate scores while still hiding localized harness
+failures in tool sequencing, state tracking, context selection, recovery, or
+cost. World-model traces are even easier to over-credit because a plausible
+rollout can mask impossible transitions, drift, bad intervention selection, or
+reset/replay errors. Required and waived coverage cells make those evaluation
+pressures explicit before a candidate can be promoted.
+
 ## CM-0001: Minimal CLI Skeleton
 
 - Date: 2026-06-15
@@ -312,3 +345,52 @@ coverage should still explain the source and failure family of the new cases.
 - Remediation: define required versus waived coverage cells, add waiver metadata
   to the suite manifest or a separate waiver file, and only then promote missing
   family coverage from report-only evidence into gate enforcement.
+
+## CM-0011: Coverage Policy Gate Enforcement
+
+- Date: 2026-06-19
+- Files changed: `benchmarks/sim-v0/manifest.json`,
+  `src/harness_rsi/benchmarks.py`, `src/harness_rsi/cli.py`,
+  `tests/test_harness.py`, `tests/test_eval_suite_coverage.py`,
+  `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: `sim-v0` should not promote candidates from coverage that is only
+  accidentally sparse. Required and waived coverage cells make promotion gates
+  distinguish missing evidence from intentionally deferred evidence.
+- Change made: added `coverage_policy` to the `sim-v0` manifest with required
+  cells and waived missing cells. Coverage reports now classify required,
+  waived, and unclassified missing environment/family/split cells. Gates now
+  include `coverage_policy_digest`, `coverage_failures`,
+  `missing_required_cells`, `waived_missing_cells`, and
+  `unclassified_missing_count`, and they reject candidates when required
+  coverage is missing. Waived and unclassified missing cells remain visible as
+  audit evidence but do not block promotion by themselves.
+- Gate enforcement: missing required cells fail closed during gate evaluation
+  alongside score and environment checks. Waived cells are copied into gate
+  artifacts so reviewers can see exactly which evidence was absent and why it
+  was allowed for this suite version. Report-only cells remain visible in
+  `coverage.json` and gate artifacts as `unclassified_missing_count`.
+- Frontier/world-model note: aggregate pass-rate wins are not enough evidence
+  for frontier models or Decart-style world-model traces. Coverage policy should
+  protect localized families such as state consistency, drift detection,
+  intervention selection, reset/replay, tool sequencing, context selection, and
+  recovery from being hidden by stronger model priors or easier task families.
+- Validation run: `pytest` reported 45 passing tests; `ruff check .` passed.
+  Tests cover required and waived coverage cells, gate pass with waived missing
+  cells, gate rejection when a required cell is missing, and fail-closed behavior
+  for malformed coverage-policy shape. CLI smoke materialized `sim-v0`, wrote
+  coverage, ran two heldout passes, and wrote a gate decision with no coverage
+  failures.
+- Observation: the first policy layer exposed the difference between sparse
+  coverage and missing required evidence. `sim-v0.1` has many unclassified
+  missing cells, but only explicit required cells should block promotion. This
+  keeps the suite honest without pretending it is comprehensive yet. The full
+  coverage matrix is already too large for routine CLI output, so the command
+  now prints summary counts and preserves the full matrix in `coverage.json`.
+- Learning: coverage policy is a measurement contract, not just benchmark
+  metadata. It lets the harness say, "this missing evidence is acceptable for
+  now" or "this missing evidence invalidates promotion," which is exactly the
+  kind of explicit self-evaluation loop needed for harness-level RSI.
+- Remediation: add waiver owner/review metadata or expiry conditions, and expand
+  `world_model_static` with Decart-style rollout trace cases before making more
+  world-model families required.

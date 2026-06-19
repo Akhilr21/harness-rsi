@@ -166,6 +166,11 @@ harness-rsi benchmark coverage --benchmark sim-v0
 
 Compiled task rows carry evaluator digests, run metadata carries suite and
 coverage digests, and compare/gate/cycle evidence preserves those identities.
+`sim-v0` also defines required and waived coverage cells. Missing required cells
+fail gates; waived and unclassified missing cells remain visible in artifacts
+without blocking promotion by themselves.
+The coverage command prints a concise summary and writes the full
+environment/family/split matrix to `.rsi/benchmarks/<name>/coverage.json`.
 
 See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
 expectations.

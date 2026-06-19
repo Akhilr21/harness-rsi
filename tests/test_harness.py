@@ -75,14 +75,29 @@ def test_source_benchmark_profile_materializes_sim_v0(tmp_path: Path) -> None:
         assert coverage["environment_family_matrix"]["world_model_static"][
             "impossible_transition"
         ]["heldout"] == 1
+        assert coverage["coverage_policy"]["fail_on_missing_required"] is True
+        assert not coverage["missing_required_cells"]
+        assert {
+            "environment": "data_ops",
+            "family": "schema_reasoning",
+            "split": "regression",
+            "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+            "count": 0,
+            "status": "waived_missing",
+        } in coverage["waived_missing_cells"]
         assert coverage["coverage_digest"]
         assert (tmp_path / ".rsi" / "harnesses" / "H0.json").exists()
 
 
-def test_benchmark_coverage_command_writes_report(tmp_path: Path) -> None:
+def test_benchmark_coverage_command_writes_report(tmp_path: Path, capsys) -> None:
     with working_dir(tmp_path):
         assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
         assert main(["benchmark", "coverage", "--benchmark", "sim-v0"]) == 0
+        output = capsys.readouterr().out
+        assert "Missing required cells: 0" in output
+        assert "Waived missing cells: 4" in output
+        assert "Unclassified missing cells:" in output
+        assert "environment_family_matrix" not in output
         coverage = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "coverage.json")
         assert coverage["task_count"] == 27
         assert coverage["environment_split_counts"]["knowledge_work"] == {
@@ -93,6 +108,73 @@ def test_benchmark_coverage_command_writes_report(tmp_path: Path) -> None:
         assert {"name": "data_ops", "split": "regression"} in coverage[
             "missing_environment_splits"
         ]
+
+
+def test_sim_v0_gate_passes_with_waived_missing_coverage(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        baseline_run, candidate_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-2:]
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["coverage_failures"] == []
+        assert gate["coverage_policy_digest"]
+        assert gate["waived_missing_cells"]
+
+
+def test_sim_v0_gate_rejects_missing_required_coverage(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        manifest_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json"
+        manifest = read_json(manifest_path)
+        manifest["coverage_policy"]["required"].append(
+            {
+                "environment": "data_ops",
+                "family": "schema_reasoning",
+                "split": "regression",
+                "reason": "Test-only missing required cell.",
+            }
+        )
+        write_json(manifest_path, manifest)
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        assert main(["benchmark", "run", "--benchmark", "sim-v0", "--split", "heldout", "--mock"]) == 0
+        baseline_run, candidate_run = sorted((tmp_path / ".rsi" / "runs").iterdir())[-2:]
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+        gate = read_json(gate_path)
+        assert gate["pass_rate_delta"] == 0
+        assert gate["decision"] == "reject"
+        assert gate["coverage_failures"] == [
+            {
+                "environment": "data_ops",
+                "family": "schema_reasoning",
+                "split": "regression",
+                "reason": "Test-only missing required cell.",
+                "count": 0,
+                "status": "missing_required",
+            }
+        ]
+
+
+def test_coverage_policy_rejects_malformed_required_shape(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        manifest_path = tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "manifest.json"
+        manifest = read_json(manifest_path)
+        manifest["coverage_policy"]["required"] = {"environment": "knowledge_work"}
+        write_json(manifest_path, manifest)
+        assert main(["benchmark", "coverage", "--benchmark", "sim-v0"]) == 1
 
 
 def test_source_benchmark_profile_rejects_duplicate_task_ids(tmp_path: Path) -> None:
@@ -241,6 +323,67 @@ def test_gate_rejects_when_threshold_not_met(tmp_path: Path) -> None:
             max_allowed_drop=0,
         )
         assert read_json(gate_path)["decision"] == "reject"
+
+
+def test_gate_rejects_missing_required_coverage(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        missing = {
+            "environment": "knowledge_work",
+            "family": "policy_following",
+            "split": "heldout",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[missing], waived_missing=[])
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "reject"
+        assert gate["coverage_failures"] == [
+            {
+                **missing,
+                "reason": "",
+                "count": 0,
+                "status": "missing_required",
+            }
+        ]
+
+
+def test_gate_allows_waived_missing_coverage(tmp_path: Path) -> None:
+    with working_dir(tmp_path):
+        waiver = {
+            "environment": "data_ops",
+            "family": "metric_selection",
+            "split": "regression",
+            "reason": "Covered by heldout until regression data fixtures exist.",
+        }
+        write_fake_coverage_report(tmp_path, missing_required=[], waived_missing=[waiver])
+        baseline_run = write_fake_run(tmp_path / "baseline", passed=2, task_count=2)
+        candidate_run = write_fake_run(tmp_path / "candidate", passed=2, task_count=2)
+
+        gate_path = gate_candidate(
+            baseline_run=baseline_run,
+            candidate_run=candidate_run,
+            min_pass_rate_delta=0,
+            max_allowed_drop=0,
+        )
+
+        gate = read_json(gate_path)
+        assert gate["decision"] == "promote"
+        assert gate["coverage_failures"] == []
+        assert gate["waived_missing_cells"] == [
+            {
+                **waiver,
+                "count": 0,
+                "status": "waived_missing",
+            }
+        ]
 
 
 def test_gate_writes_unique_artifacts_for_multiple_policies(tmp_path: Path) -> None:
@@ -643,6 +786,40 @@ def write_fake_run(
         },
     )
     return path
+
+
+def write_fake_coverage_report(
+    path: Path,
+    *,
+    missing_required: list[dict[str, str]],
+    waived_missing: list[dict[str, str]],
+) -> None:
+    root = path / ".rsi" / "benchmarks" / "fake"
+    write_json(
+        root / "manifest.json",
+        {
+            "name": "fake",
+            "coverage_policy": {
+                "fail_on_missing_required": True,
+                "required": missing_required,
+                "waivers": waived_missing,
+            },
+        },
+    )
+    write_json(root / "gate_policy.json", {"heldout": {"min_pass_rate_delta": 0}})
+    for split in ("train", "heldout", "regression"):
+        rows = [
+            {
+                "id": f"{split}-task",
+                "environment": "fake",
+                "family": "smoke",
+                "instruction": "Return ok.",
+                "eval": {"type": "exact", "expected": "ok"},
+            }
+        ]
+        (root / f"{split}.jsonl").write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+        )
 
 
 def write_minimal_source_profile(path: Path, train_rows: list[dict[str, object]]) -> None:

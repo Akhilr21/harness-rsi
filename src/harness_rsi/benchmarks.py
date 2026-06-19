@@ -443,7 +443,13 @@ def gate_candidate(
         thresholds["max_environment_drop"],
         thresholds["protected_environments"],
     )
-    passed = delta >= thresholds["min_delta"] and not environment_failures
+    coverage_evidence = coverage_gate_evidence(comparison["benchmark"])
+    coverage_failures = coverage_evidence["coverage_failures"]
+    passed = (
+        delta >= thresholds["min_delta"]
+        and not environment_failures
+        and not coverage_failures
+    )
     decision = {
         **comparison,
         "requested_min_pass_rate_delta": min_pass_rate_delta,
@@ -454,11 +460,12 @@ def gate_candidate(
         "effective_min_delta": thresholds["min_delta"],
         "protected_environments": thresholds["protected_environments"],
         "environment_failures": environment_failures,
+        **coverage_evidence,
         "decision": "promote" if passed else "reject",
         "rationale": (
             "Candidate met pass-rate gate."
             if passed
-            else "Candidate failed pass-rate, regression, or environment gate."
+            else "Candidate failed pass-rate, regression, environment, or coverage gate."
         ),
     }
     decided_at = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -534,6 +541,38 @@ def find_environment_failures(
     return failures
 
 
+def find_coverage_failures(benchmark: str) -> list[dict[str, Any]]:
+    return coverage_gate_evidence(benchmark)["coverage_failures"]
+
+
+def coverage_gate_evidence(benchmark: str) -> dict[str, Any]:
+    if not benchmark_dir(benchmark).exists():
+        return empty_coverage_evidence()
+    report = build_coverage_report(benchmark)
+    failures = (
+        report.get("missing_required_cells", [])
+        if report.get("coverage_policy", {}).get("fail_on_missing_required")
+        else []
+    )
+    return {
+        "coverage_policy_digest": report.get("coverage_policy_digest"),
+        "coverage_failures": failures,
+        "missing_required_cells": report.get("missing_required_cells", []),
+        "waived_missing_cells": report.get("waived_missing_cells", []),
+        "unclassified_missing_count": len(report.get("unclassified_missing_cells", [])),
+    }
+
+
+def empty_coverage_evidence() -> dict[str, Any]:
+    return {
+        "coverage_policy_digest": None,
+        "coverage_failures": [],
+        "missing_required_cells": [],
+        "waived_missing_cells": [],
+        "unclassified_missing_count": 0,
+    }
+
+
 def write_coverage_report(benchmark: str) -> Path:
     report = build_coverage_report(benchmark)
     path = benchmark_dir(benchmark) / "coverage.json"
@@ -556,6 +595,30 @@ def build_coverage_report(benchmark: str) -> dict[str, Any]:
     family_split_counts = build_split_counts(split_rows, "family", families)
     missing_environment_splits = missing_split_cells(environment_split_counts)
     missing_family_splits = missing_split_cells(family_split_counts)
+    coverage_policy = normalize_coverage_policy(manifest.get("coverage_policy", {}))
+    required_cells = evaluate_policy_cells(
+        coverage_policy["required"],
+        matrix,
+        status_when_missing="missing_required",
+        status_when_covered="covered_required",
+    )
+    waived_cells = evaluate_policy_cells(
+        coverage_policy["waivers"],
+        matrix,
+        status_when_missing="waived_missing",
+        status_when_covered="waived_covered",
+    )
+    missing_required_cells = [cell for cell in required_cells if cell["status"] == "missing_required"]
+    waived_missing_cells = [cell for cell in waived_cells if cell["status"] == "waived_missing"]
+    classified_missing = {
+        cell_identity(cell)
+        for cell in [*missing_required_cells, *waived_missing_cells]
+    }
+    unclassified_missing_cells = [
+        cell
+        for cell in missing_environment_family_split_cells(matrix)
+        if cell_identity(cell) not in classified_missing
+    ]
     evaluator_digests = sorted(
         {
             task.get("evaluator_digest") or evaluator_digest(task.get("eval", {}))
@@ -576,10 +639,102 @@ def build_coverage_report(benchmark: str) -> dict[str, Any]:
         "environment_family_matrix": matrix,
         "missing_environment_splits": missing_environment_splits,
         "missing_family_splits": missing_family_splits,
+        "coverage_policy": coverage_policy,
+        "coverage_policy_digest": digest_payload(coverage_policy),
+        "required_cells": required_cells,
+        "waived_cells": waived_cells,
+        "missing_required_cells": missing_required_cells,
+        "waived_missing_cells": waived_missing_cells,
+        "unclassified_missing_cells": unclassified_missing_cells,
         "evaluator_digests": evaluator_digests,
     }
     report["coverage_digest"] = digest_payload(report)
     return report
+
+
+def normalize_coverage_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    if not policy:
+        return {"fail_on_missing_required": False, "required": [], "waivers": []}
+    if not isinstance(policy, dict):
+        raise RuntimeError("coverage_policy must be an object.")
+    required = policy.get("required", [])
+    waivers = policy.get("waivers", [])
+    if not isinstance(required, list):
+        raise RuntimeError("coverage_policy.required must be a list.")
+    if not isinstance(waivers, list):
+        raise RuntimeError("coverage_policy.waivers must be a list.")
+    return {
+        "fail_on_missing_required": bool(policy.get("fail_on_missing_required", True)),
+        "required": [normalize_policy_cell(cell, "required") for cell in required],
+        "waivers": [normalize_policy_cell(cell, "waiver") for cell in waivers],
+    }
+
+
+def normalize_policy_cell(cell: Any, label: str) -> dict[str, Any]:
+    if not isinstance(cell, dict):
+        raise RuntimeError(f"coverage_policy {label} cells must be objects.")
+    missing = [key for key in ("environment", "family", "split") if not cell.get(key)]
+    if missing:
+        raise RuntimeError(
+            f"coverage_policy {label} cell is missing required keys: {', '.join(missing)}."
+        )
+    split = str(cell["split"])
+    if split not in REQUIRED_SPLITS:
+        raise RuntimeError(f"coverage_policy {label} cell has unknown split: {split}.")
+    return {
+        "environment": str(cell["environment"]),
+        "family": str(cell["family"]),
+        "split": split,
+        "reason": str(cell.get("reason", "")),
+    }
+
+
+def evaluate_policy_cells(
+    cells: list[dict[str, Any]],
+    matrix: dict[str, dict[str, dict[str, int]]],
+    *,
+    status_when_missing: str,
+    status_when_covered: str,
+) -> list[dict[str, Any]]:
+    evaluated = []
+    for cell in cells:
+        count = (
+            matrix.get(cell["environment"], {})
+            .get(cell["family"], {})
+            .get(cell["split"], 0)
+        )
+        evaluated.append(
+            {
+                **cell,
+                "count": count,
+                "status": status_when_covered if count > 0 else status_when_missing,
+            }
+        )
+    return evaluated
+
+
+def missing_environment_family_split_cells(
+    matrix: dict[str, dict[str, dict[str, int]]],
+) -> list[dict[str, Any]]:
+    missing = []
+    for environment, families in matrix.items():
+        for family, split_counts in families.items():
+            for split, count in split_counts.items():
+                if count == 0:
+                    missing.append(
+                        {
+                            "environment": environment,
+                            "family": family,
+                            "split": split,
+                            "count": count,
+                            "status": "unclassified_missing",
+                        }
+                    )
+    return missing
+
+
+def cell_identity(cell: dict[str, Any]) -> tuple[str, str, str]:
+    return (str(cell["environment"]), str(cell["family"]), str(cell["split"]))
 
 
 def build_environment_family_matrix(

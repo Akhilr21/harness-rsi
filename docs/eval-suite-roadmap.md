@@ -96,8 +96,9 @@ Implemented report shape:
   `customer_support`, `world_model_static`, and `mechanics`
 - columns: failure families seen in the selected suite profile
 - cells: task count by split for each environment/family pair
-- summary: missing split cells, total task count, suite digest, coverage digest,
-  and evaluator digest coverage
+- summary: required cells, waived cells, missing required cells, unclassified
+  missing cells, total task count, suite digest, coverage digest, and evaluator
+  digest coverage
 
 CLI:
 
@@ -106,9 +107,12 @@ harness-rsi benchmark coverage --benchmark sim-v0
 ```
 
 The command reads the materialized `.rsi/benchmarks/sim-v0` copy, writes
-`coverage.json`, and reports missing environment/family split cells. The current
-version is report-only; gate enforcement for missing required cells should come
-after required cells and waivers are explicit.
+`coverage.json`, and prints a concise summary of required, waived, and
+unclassified missing environment/family/split cells. The full sparse matrix
+stays in the JSON artifact so review stays possible without flooding every CLI
+run. Gates fail when required cells are missing and `fail_on_missing_required`
+is enabled. Waived and unclassified missing cells are audit evidence only until
+promoted to required coverage.
 
 Rejected candidates should update the matrix. The point is not only to improve
 the next prompt; it is to make the next evaluation harder in the exact place the
@@ -155,9 +159,9 @@ Per-environment gating prevents an aggregate win from hiding a localized failure
 A candidate that improves `knowledge_work` should not be promoted if it breaks
 `tool_use`, `world_model`, or another protected environment beyond policy.
 
-Missing evidence should fail closed unless the change-management entry records
-an explicit waiver and the reason that waiver is acceptable for the current
-suite version.
+Missing required evidence fails closed. Waived cells are copied into reports and
+gate artifacts with reasons, and unclassified missing cells remain visible as
+backlog pressure for future suite versions.
 
 ## Frontier And World-Model Pressure
 
@@ -226,16 +230,17 @@ the harness.
 CM-0009 completed the first foundation: committed `sim-v0` sources, benchmark
 profile materialization, split metadata, per-environment scores, and
 `gate_policy.json` enforcement. CM-0010 added coverage reporting plus
-suite/evaluator/coverage identity propagation.
+suite/evaluator/coverage identity propagation. CM-0011 added required and
+waived coverage cells and gate enforcement for missing required coverage.
 
 The next increment should target:
 
-1. Decide which coverage cells are required, waived, or report-only before
-   making missing coverage fail gates.
-2. Add explicit waiver files or manifest fields for intentionally missing
-   family/split cells.
-3. Expand `world_model_static` toward Decart-style rollout trace cases while
+1. Add waiver owner/review metadata or expiry conditions for intentionally
+   missing family/split cells.
+2. Expand `world_model_static` toward Decart-style rollout trace cases while
    keeping the adapter local and deterministic.
-4. Add digest mismatch tests at the composite-gate and promotion boundary.
+3. Add digest mismatch tests at the composite-gate and promotion boundary.
+4. Decide when efficiency thresholds are reliable enough to gate attempts,
+   duration, tool calls, and cost.
 5. Only then add read-only external adapters for Terminal-Bench, SWE-bench, and
    tau/tau3-style tasks.
