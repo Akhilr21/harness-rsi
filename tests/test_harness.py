@@ -262,6 +262,10 @@ def test_benchmark_import_adapters_writes_source_profile_and_materializes(
         assert import_report["status"] == "pass"
         assert import_report["read_only"] is True
         assert import_report["gate_semantics_changed"] is False
+        assert import_report["row_count"] == 3
+        assert import_report["imported_row_count"] == 3
+        assert import_report["rejected_row_count"] == 0
+        assert import_report["rejected_rows"] == []
         assert import_report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
         assert import_report["kind_counts"] == {
             "swe_patch": 1,
@@ -308,6 +312,271 @@ def test_benchmark_import_adapters_writes_source_profile_and_materializes(
         assert adapter_report["status"] == "pass"
         assert adapter_report["external_adapter_task_count"] == 3
         assert adapter_report["gate_semantics_changed"] is False
+
+
+def test_benchmark_import_adapters_allows_rejected_rows_with_report(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "partial-export.json"
+        rows = frozen_adapter_rows()
+        rejected = frozen_adapter_row("bad-row", "train", "terminal-bench", "bad-row")
+        del rejected["instruction"]
+        del rejected["expected"]
+        rows.append(rejected)
+        write_frozen_adapter_export(export, rows=rows)
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "partial-adapters",
+                    "--allow-rejected-rows",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Status: pass_with_rejections" in output
+        assert "Rejected rows: 1" in output
+
+        report = read_json(tmp_path / "benchmarks" / "partial-adapters" / "import_report.json")
+        assert report["status"] == "pass_with_rejections"
+        assert report["allow_rejects"] is True
+        assert report["review_only"] is False
+        assert report["source_row_count"] == 4
+        assert report["row_count"] == 4
+        assert report["accepted_task_count"] == 3
+        assert report["imported_row_count"] == 3
+        assert report["rejected_row_count"] == 1
+        assert report["rejection_reason_counts"] == {"invalid_row": 1}
+        assert report["accepted_rows_digest"]
+        assert report["rejected_rows_digest"]
+        assert report["rejected_rows"][0]["status"] == "rejected"
+        assert report["rejected_rows"][0]["reason"] == "invalid_row"
+        assert report["rejected_rows"][0]["source_path"] == "partial-export.json"
+        assert report["rejected_rows"][0]["line_number"] is None
+        assert "instruction-like text" in report["rejected_rows"][0]["message"]
+        assert report["rejected_rows"][0]["external_id"] == "bad-row"
+        assert report["rejected_rows"][0]["source_row_digest"]
+        assert "instruction" not in report["rejected_rows"][0]
+
+        assert main(["benchmark", "init", "--name", "partial-adapters"]) == 0
+        assert main(["benchmark", "adapters", "--benchmark", "partial-adapters"]) == 0
+        adapter_report = read_json(
+            tmp_path / ".rsi" / "benchmarks" / "partial-adapters" / "adapter_report.json"
+        )
+        assert adapter_report["status"] == "pass"
+        assert adapter_report["external_adapter_task_count"] == 3
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+
+
+def test_benchmark_import_adapters_rejects_bad_rows_by_default(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "strict-reject-export.json"
+        rows = frozen_adapter_rows()
+        rejected = frozen_adapter_row("bad-row", "train", "terminal-bench", "bad-row")
+        del rejected["instruction"]
+        del rejected["expected"]
+        rows.append(rejected)
+        write_frozen_adapter_export(export, rows=rows)
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "strict-reject",
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "rejected row" in output.err
+        assert "instruction-like text" in output.err
+        assert not (tmp_path / "benchmarks" / "strict-reject").exists()
+        review = read_json(
+            tmp_path / "benchmarks" / "_import_reviews" / "strict-reject" / "import_review.json"
+        )
+        assert review["status"] == "review"
+        assert review["review_only"] is True
+        assert review["rejected_row_count"] == 1
+        assert review["rejection_reason_counts"] == {"invalid_row": 1}
+
+
+def test_benchmark_import_adapters_uses_split_map_for_missing_splits(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "split-map-export.json"
+        rows = frozen_adapter_rows()
+        for row in rows:
+            del row["split"]
+        write_frozen_adapter_export(export, rows=rows)
+        split_map = tmp_path / "split-map.json"
+        write_json(
+            split_map,
+            {
+                "splits": {
+                    "tb-task-1": "train",
+                    "swe-issue-1": "heldout",
+                    "tau-dialog-1": "regression",
+                    "unused-external-id": "train",
+                }
+            },
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "split-map-adapters",
+                    "--split-map",
+                    str(split_map),
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Split map: split-map.json used=3 unused=1" in output
+        report = read_json(tmp_path / "benchmarks" / "split-map-adapters" / "import_report.json")
+        assert report["status"] == "pass"
+        assert report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        assert report["split_map"]["provided"] is True
+        assert report["split_map"]["source_name"] == "split-map.json"
+        assert report["split_map"]["source_digest"]
+        assert report["split_map"]["entry_count"] == 4
+        assert report["split_map"]["used_count"] == 3
+        assert report["split_map"]["unused_count"] == 1
+        assert report["split_map"]["unused_keys"] == ["unused-external-id"]
+
+        assert main(["benchmark", "init", "--name", "split-map-adapters"]) == 0
+        materialized = tmp_path / ".rsi" / "benchmarks" / "split-map-adapters"
+        manifest = read_json(materialized / "manifest.json")
+        assert manifest["split_map"]["used_count"] == 3
+        assert manifest["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+
+
+def test_benchmark_import_adapters_maps_raw_split_labels(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "raw-split-export.json"
+        rows = frozen_adapter_rows()
+        rows[0]["split"] = "fit"
+        rows[1]["split"] = "dev"
+        rows[2]["split"] = "test"
+        write_frozen_adapter_export(export, rows=rows)
+        split_map = tmp_path / "raw-split-map.json"
+        write_json(split_map, {"splits": {"fit": "train", "dev": "heldout", "test": "regression"}})
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "raw-split-adapters",
+                    "--split-map",
+                    str(split_map),
+                ]
+            )
+            == 0
+        )
+        report = read_json(tmp_path / "benchmarks" / "raw-split-adapters" / "import_report.json")
+        assert report["status"] == "pass"
+        assert report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        assert report["split_map"]["used_count"] == 3
+        assert report["split_map_digest"] == report["split_map"]["source_digest"]
+
+
+def test_benchmark_import_adapters_review_split_map_writes_review_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "review-export.json"
+        rows = frozen_adapter_rows()
+        rows[1]["split"] = "dev"
+        write_frozen_adapter_export(export, rows=rows)
+        split_map = tmp_path / "review-map.json"
+        write_json(split_map, {"splits": {"dev": "heldout"}})
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "review-adapters",
+                    "--split-map",
+                    str(split_map),
+                    "--review-split-map",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Wrote adapter import review" in output
+        assert not (tmp_path / "benchmarks" / "review-adapters").exists()
+        review = read_json(
+            tmp_path / "benchmarks" / "_import_reviews" / "review-adapters" / "import_review.json"
+        )
+        assert review["status"] == "review"
+        assert review["review_only"] is True
+        assert review["split_map"]["used_count"] == 1
+        assert review["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+
+
+def test_benchmark_import_adapters_rejects_split_map_conflicts(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "split-conflict-export.json"
+        write_frozen_adapter_export(export)
+        split_map = tmp_path / "split-map.json"
+        write_json(split_map, {"splits": {"terminal-bench:tb-task-1": "heldout"}})
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "split-conflict",
+                    "--split-map",
+                    str(split_map),
+                ]
+            )
+            == 1
+        )
+        output = capsys.readouterr()
+        assert "conflicts with split map" in output.err
+        assert not (tmp_path / "benchmarks" / "split-conflict").exists()
 
 
 def test_benchmark_import_adapters_rejects_missing_required_split(

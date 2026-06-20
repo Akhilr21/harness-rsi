@@ -156,10 +156,17 @@ def benchmark_import_adapters(args: argparse.Namespace) -> int:
         source=Path(args.source),
         profile=args.profile,
         suite_version=args.suite_version,
+        split_map_path=Path(args.split_map) if args.split_map else None,
+        allow_rejects=args.allow_rejects,
+        review_only=args.review_split_map,
         force=args.force,
     )
-    report = read_json(path / "import_report.json")
-    print(f"Wrote imported adapter profile to {path}")
+    report_name = "import_review.json" if args.review_split_map else "import_report.json"
+    report = read_json(path / report_name)
+    if args.review_split_map:
+        print(f"Wrote adapter import review to {path}")
+    else:
+        print(f"Wrote imported adapter profile to {path}")
     print(readable_import_summary(report))
     return 0
 
@@ -288,8 +295,10 @@ def readable_import_summary(report: dict[str, object]) -> str:
         f"Status: {report.get('status')}",
         f"Read only: {report.get('read_only')}",
         f"Task count: {report.get('task_count')}",
+        f"Rejected rows: {report.get('rejected_row_count')}",
         f"Splits: {readable_split_counts(report.get('split_counts', {}))}",
         f"Adapters: {readable_status_counts_for_dict(report.get('adapter_counts', {}))}",
+        f"Split map: {readable_split_map_summary(report.get('split_map', {}))}",
         f"Gate semantics changed: {report.get('gate_semantics_changed')}",
         f"Import report digest: {report.get('import_report_digest')}",
     ]
@@ -321,6 +330,15 @@ def readable_status_counts_for_dict(value: object) -> str:
     if not isinstance(value, dict) or not value:
         return "none"
     return ", ".join(f"{name}={value[name]}" for name in sorted(value))
+
+
+def readable_split_map_summary(value: object) -> str:
+    if not isinstance(value, dict) or not value.get("provided"):
+        return "none"
+    return (
+        f"{value.get('source_name')} used={value.get('used_count')} "
+        f"unused={value.get('unused_count')}"
+    )
 
 
 def readable_split_counts(value: object) -> str:
@@ -434,6 +452,19 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_import_adapters_parser.add_argument("--source", required=True)
     benchmark_import_adapters_parser.add_argument("--profile", required=True)
     benchmark_import_adapters_parser.add_argument("--suite-version")
+    benchmark_import_adapters_parser.add_argument("--split-map")
+    benchmark_import_adapters_parser.add_argument(
+        "--allow-rejected-rows",
+        "--allow-rejects",
+        dest="allow_rejects",
+        action="store_true",
+        help="Write a partial source profile when invalid rows are rejected but required splits remain.",
+    )
+    benchmark_import_adapters_parser.add_argument(
+        "--review-split-map",
+        action="store_true",
+        help="Write only an import review artifact under benchmarks/_import_reviews/<profile>.",
+    )
     benchmark_import_adapters_parser.add_argument("--force", action="store_true")
     benchmark_import_adapters_parser.set_defaults(func=benchmark_import_adapters)
 

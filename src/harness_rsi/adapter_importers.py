@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -57,30 +57,88 @@ class FrozenExport:
     source_digest: str
 
 
+@dataclass
+class SplitMap:
+    entries: dict[str, str]
+    source_name: str
+    source_digest: str
+    used_keys: set[str] = field(default_factory=set)
+
+
+@dataclass
+class ImportResult:
+    split_rows: dict[str, list[dict[str, Any]]]
+    rejected_rows: list[dict[str, Any]]
+    split_map: SplitMap | None
+
+
 def import_external_adapter_profile(
     *,
     source: Path,
     profile: str,
     suite_version: str | None = None,
+    split_map_path: Path | None = None,
+    allow_rejects: bool = False,
+    review_only: bool = False,
     force: bool = False,
 ) -> Path:
     export = read_frozen_export(source)
+    split_map = read_split_map(split_map_path) if split_map_path else None
     output = source_profile_output(profile)
-    if output.exists() and not force:
+    review_output = import_review_output(profile)
+    if output.exists() and not force and not review_only:
         raise RuntimeError(f"Benchmark source profile already exists: {output}")
 
-    split_rows = normalize_export_rows(export, profile=profile)
-    validate_external_adapter_metadata(split_rows)
-    ensure_required_import_splits(split_rows)
+    result = normalize_export_rows(export, profile=profile, split_map=split_map)
+    resolved_suite_version = suite_version or export.defaults.get("suite_version") or f"{profile}.1"
+    if review_only:
+        if review_output.exists():
+            shutil.rmtree(review_output)
+        write_import_review(
+            output=review_output,
+            profile=profile,
+            split_rows=result.split_rows,
+            rejected_rows=result.rejected_rows,
+            split_map=result.split_map,
+            allow_rejects=allow_rejects,
+            export=export,
+            suite_version=resolved_suite_version,
+        )
+        return review_output
+    if result.rejected_rows and not allow_rejects:
+        if review_output.exists():
+            shutil.rmtree(review_output)
+        write_import_review(
+            output=review_output,
+            profile=profile,
+            split_rows=result.split_rows,
+            rejected_rows=result.rejected_rows,
+            split_map=result.split_map,
+            allow_rejects=allow_rejects,
+            export=export,
+            suite_version=resolved_suite_version,
+        )
+        first = result.rejected_rows[0]
+        raise RuntimeError(
+            "Frozen export has "
+            f"{len(result.rejected_rows)} rejected row(s); first rejection: "
+            f"{first['message']}. Review written to {review_output / 'import_review.json'}. "
+            "Rerun with --allow-rejected-rows to write a partial import."
+        )
+    validate_external_adapter_metadata(result.split_rows)
+    ensure_required_import_splits(result.split_rows)
 
     if output.exists():
         shutil.rmtree(output)
     write_imported_source_profile(
         output=output,
         profile=profile,
-        split_rows=split_rows,
+        split_rows=result.split_rows,
+        rejected_rows=result.rejected_rows,
+        split_map=result.split_map,
+        allow_rejects=allow_rejects,
         export=export,
-        suite_version=suite_version or export.defaults.get("suite_version") or f"{profile}.1",
+        suite_version=resolved_suite_version,
     )
     return output
 
@@ -178,31 +236,110 @@ def rows_and_defaults_from_payload(
 
 
 def source_profile_output(profile: str) -> Path:
+    return SOURCE_BENCHMARKS / safe_profile_path(profile)
+
+
+def import_review_output(profile: str) -> Path:
+    return SOURCE_BENCHMARKS / "_import_reviews" / safe_profile_path(profile)
+
+
+def safe_profile_path(profile: str) -> Path:
     profile_path = Path(profile)
     if profile_path.is_absolute() or any(part in {"", ".", ".."} for part in profile_path.parts):
         raise RuntimeError(f"Invalid benchmark source profile name: {profile}")
-    return SOURCE_BENCHMARKS / profile_path
+    return profile_path
 
 
-def normalize_export_rows(export: FrozenExport, *, profile: str) -> dict[str, list[dict[str, Any]]]:
+def read_split_map(path: Path) -> SplitMap:
+    if not path.exists():
+        raise RuntimeError(f"Split map not found: {path}")
+    payload = read_json(path)
+    raw_entries = payload.get("splits", payload) if isinstance(payload, dict) else None
+    if not isinstance(raw_entries, dict):
+        raise RuntimeError("Split map must be an object or contain an object under splits.")
+    entries: dict[str, str] = {}
+    for raw_key, raw_split in raw_entries.items():
+        key = string_value(raw_key)
+        split = string_value(raw_split)
+        if key is None or split not in REQUIRED_SPLITS:
+            raise RuntimeError(
+                f"Split map entries must map non-empty keys to {', '.join(REQUIRED_SPLITS)}."
+            )
+        entries[key] = split
+    return SplitMap(
+        entries=entries,
+        source_name=path.name,
+        source_digest=digest_payload({"file": path.name, "payload": payload}),
+    )
+
+
+def normalize_export_rows(
+    export: FrozenExport,
+    *,
+    profile: str,
+    split_map: SplitMap | None = None,
+) -> ImportResult:
     if not export.rows:
         raise RuntimeError("Frozen export contains no rows.")
     split_rows: dict[str, list[dict[str, Any]]] = {split: [] for split in REQUIRED_SPLITS}
     seen_ids: dict[str, set[str]] = {split: set() for split in REQUIRED_SPLITS}
+    seen_external_ids: dict[tuple[str, str], str] = {}
+    rejected_rows: list[dict[str, Any]] = []
     for index, row in enumerate(export.rows, start=1):
-        normalized = normalize_export_row(
-            row,
-            index=index,
-            profile=profile,
-            defaults=export.defaults,
-        )
+        try:
+            normalized = normalize_export_row(
+                row,
+                index=index,
+                profile=profile,
+                defaults=export.defaults,
+                split_map=split_map,
+            )
+        except RuntimeError as error:
+            rejected_rows.append(
+                rejected_row(
+                    row,
+                    index=index,
+                    reason="invalid_row",
+                    error=error,
+                    source_name=export.source_name,
+                )
+            )
+            continue
         split = normalized["split"]
         if normalized["id"] in seen_ids[split]:
-            raise RuntimeError(f"Duplicate imported task id {normalized['id']} in {split} split.")
+            rejected_rows.append(
+                rejected_row(
+                    row,
+                    index=index,
+                    reason="duplicate_task_id",
+                    error=RuntimeError(
+                        f"Duplicate imported task id {normalized['id']} in {split} split."
+                    ),
+                    source_name=export.source_name,
+                )
+            )
+            continue
+        adapter = normalized["external_adapter"]
+        external_key = (str(adapter["name"]), str(adapter["external_id"]))
+        if external_key in seen_external_ids:
+            rejected_rows.append(
+                rejected_row(
+                    row,
+                    index=index,
+                    reason="duplicate_external_id",
+                    error=RuntimeError(
+                        "Duplicate imported external id "
+                        f"{adapter['external_id']} for {adapter['name']} in "
+                        f"{seen_external_ids[external_key]} and {split} splits."
+                    ),
+                    source_name=export.source_name,
+                )
+            )
+            continue
         seen_ids[split].add(normalized["id"])
+        seen_external_ids[external_key] = split
         split_rows[split].append(normalized)
-    ensure_unique_external_ids(split_rows)
-    return split_rows
+    return ImportResult(split_rows=split_rows, rejected_rows=rejected_rows, split_map=split_map)
 
 
 def normalize_export_row(
@@ -211,14 +348,10 @@ def normalize_export_row(
     index: int,
     profile: str,
     defaults: dict[str, Any],
+    split_map: SplitMap | None,
 ) -> dict[str, Any]:
-    split = str(row.get("split") or row.get("local_split") or "").strip()
-    if split not in REQUIRED_SPLITS:
-        raise RuntimeError(
-            f"Frozen export row {index} must set split to one of {', '.join(REQUIRED_SPLITS)}."
-        )
-
     adapter = normalized_adapter(row, index=index, defaults=defaults)
+    split = resolve_split(row, adapter=adapter, index=index, split_map=split_map)
     shape_defaults = DEFAULT_ADAPTERS.get(str(adapter["name"]), {})
     instruction = first_nonempty(
         row,
@@ -318,11 +451,78 @@ def normalized_adapter(
     }
 
 
+def resolve_split(
+    row: dict[str, Any],
+    *,
+    adapter: dict[str, str],
+    index: int,
+    split_map: SplitMap | None,
+) -> str:
+    row_split = string_value(row.get("split") or row.get("local_split"))
+    mapped_split = mapped_split_for_raw_split(row_split, split_map) or mapped_split_for_row(
+        row,
+        adapter=adapter,
+        split_map=split_map,
+    )
+    if row_split and row_split not in REQUIRED_SPLITS and mapped_split is None:
+        raise RuntimeError(
+            f"Frozen export row {index} must set split to one of {', '.join(REQUIRED_SPLITS)}."
+        )
+    if row_split in REQUIRED_SPLITS and mapped_split and row_split != mapped_split:
+        raise RuntimeError(
+            f"Frozen export row {index} split {row_split} conflicts with split map {mapped_split}."
+        )
+    split = row_split if row_split in REQUIRED_SPLITS else mapped_split
+    if split not in REQUIRED_SPLITS:
+        raise RuntimeError(
+            f"Frozen export row {index} must set split to one of {', '.join(REQUIRED_SPLITS)}."
+        )
+    return split
+
+
+def mapped_split_for_raw_split(row_split: str | None, split_map: SplitMap | None) -> str | None:
+    if row_split is None or split_map is None or row_split not in split_map.entries:
+        return None
+    split_map.used_keys.add(row_split)
+    return split_map.entries[row_split]
+
+
+def mapped_split_for_row(
+    row: dict[str, Any],
+    *,
+    adapter: dict[str, str],
+    split_map: SplitMap | None,
+) -> str | None:
+    if split_map is None:
+        return None
+    for key in split_map_keys(row, adapter):
+        if key in split_map.entries:
+            split_map.used_keys.add(key)
+            return split_map.entries[key]
+    return None
+
+
+def split_map_keys(row: dict[str, Any], adapter: dict[str, str]) -> list[str]:
+    keys = [
+        f"{adapter['name']}:{adapter['external_id']}",
+        adapter["external_id"],
+    ]
+    for key in ("id", "task_id", "source_task_id"):
+        value = string_value(row.get(key))
+        if value:
+            keys.append(value)
+            keys.append(f"{adapter['name']}:{value}")
+    return dedupe_strings(keys)
+
+
 def write_imported_source_profile(
     *,
     output: Path,
     profile: str,
     split_rows: dict[str, list[dict[str, Any]]],
+    rejected_rows: list[dict[str, Any]],
+    split_map: SplitMap | None,
+    allow_rejects: bool,
     export: FrozenExport,
     suite_version: str,
 ) -> None:
@@ -344,6 +544,9 @@ def write_imported_source_profile(
         "importer_version": IMPORTER_VERSION,
         "source_export_name": export.source_name,
         "source_export_digest": export.source_digest,
+        "import_status": import_status(rejected_rows, review_only=False),
+        "rejected_row_count": len(rejected_rows),
+        "split_map": split_map_summary(split_map),
         "external_adapters": adapter_manifest(split_rows),
         "coverage_policy": imported_coverage_policy(split_rows),
     }
@@ -353,9 +556,37 @@ def write_imported_source_profile(
         profile=profile,
         suite_version=suite_version,
         split_rows=split_rows,
+        rejected_rows=rejected_rows,
+        split_map=split_map,
+        allow_rejects=allow_rejects,
         export=export,
+        review_only=False,
     )
     write_json(output / "import_report.json", report)
+
+
+def write_import_review(
+    *,
+    output: Path,
+    profile: str,
+    split_rows: dict[str, list[dict[str, Any]]],
+    rejected_rows: list[dict[str, Any]],
+    split_map: SplitMap | None,
+    allow_rejects: bool,
+    export: FrozenExport,
+    suite_version: str,
+) -> None:
+    report = import_report(
+        profile=profile,
+        suite_version=suite_version,
+        split_rows=split_rows,
+        rejected_rows=rejected_rows,
+        split_map=split_map,
+        allow_rejects=allow_rejects,
+        export=export,
+        review_only=True,
+    )
+    write_json(output / "import_review.json", report)
 
 
 def import_report(
@@ -363,7 +594,11 @@ def import_report(
     profile: str,
     suite_version: str,
     split_rows: dict[str, list[dict[str, Any]]],
+    rejected_rows: list[dict[str, Any]],
+    split_map: SplitMap | None,
+    allow_rejects: bool,
     export: FrozenExport,
+    review_only: bool,
 ) -> dict[str, Any]:
     rows = [row for split in REQUIRED_SPLITS for row in split_rows[split]]
     report = {
@@ -376,18 +611,37 @@ def import_report(
             "adapter_contract_version",
             ADAPTER_CONTRACT_VERSION,
         ),
-        "status": "pass",
+        "status": import_status(rejected_rows, review_only=review_only),
+        "review_only": review_only,
         "read_only": True,
         "gate_semantics_changed": False,
+        "allow_rejects": allow_rejects,
+        "source_row_count": len(rows) + len(rejected_rows),
+        "row_count": len(rows) + len(rejected_rows),
         "task_count": len(rows),
+        "accepted_task_count": len(rows),
+        "imported_row_count": len(rows),
+        "rejected_row_count": len(rejected_rows),
+        "rejection_reason_counts": count_rejection_reasons(rejected_rows),
+        "accepted_rows_digest": digest_payload(rows),
+        "rejected_rows_digest": digest_payload(rejected_rows),
+        "split_map_digest": split_map.source_digest if split_map else None,
         "split_counts": count_field(rows, "split"),
         "kind_counts": count_adapter_field(rows, "kind"),
         "adapter_counts": count_adapter_field(rows, "name"),
         "fixture_versions": fixture_versions(rows),
+        "split_map": split_map_summary(split_map),
+        "rejected_rows": rejected_rows,
         "metadata_failures": [],
     }
     report["import_report_digest"] = digest_payload(report)
     return report
+
+
+def import_status(rejected_rows: list[dict[str, Any]], *, review_only: bool) -> str:
+    if review_only:
+        return "review"
+    return "pass_with_rejections" if rejected_rows else "pass"
 
 
 def adapter_manifest(split_rows: dict[str, list[dict[str, Any]]]) -> list[dict[str, str]]:
@@ -454,21 +708,6 @@ def ensure_required_import_splits(split_rows: dict[str, list[dict[str, Any]]]) -
         raise RuntimeError(f"Frozen export is missing required split(s): {', '.join(missing)}.")
 
 
-def ensure_unique_external_ids(split_rows: dict[str, list[dict[str, Any]]]) -> None:
-    seen: dict[tuple[str, str], str] = {}
-    for split, rows in split_rows.items():
-        for row in rows:
-            adapter = row["external_adapter"]
-            key = (str(adapter["name"]), str(adapter["external_id"]))
-            if key in seen:
-                raise RuntimeError(
-                    "Duplicate imported external id "
-                    f"{adapter['external_id']} for {adapter['name']} in "
-                    f"{seen[key]} and {split} splits."
-                )
-            seen[key] = split
-
-
 def group_by_adapter_name(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -492,12 +731,83 @@ def count_adapter_field(rows: list[dict[str, Any]], field: str) -> dict[str, int
     return {key: counts[key] for key in sorted(counts)}
 
 
+def count_rejection_reasons(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = str(row.get("reason"))
+        counts[value] = counts.get(value, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
+
+
 def fixture_versions(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     versions: dict[str, set[str]] = {}
     for row in rows:
         adapter = row["external_adapter"]
         versions.setdefault(str(adapter["name"]), set()).add(str(adapter["fixture_version"]))
     return {name: sorted(versions[name]) for name in sorted(versions)}
+
+
+def split_map_summary(split_map: SplitMap | None) -> dict[str, Any]:
+    if split_map is None:
+        return {"provided": False}
+    unused = sorted(set(split_map.entries) - split_map.used_keys)
+    return {
+        "provided": True,
+        "source_name": split_map.source_name,
+        "source_digest": split_map.source_digest,
+        "entry_count": len(split_map.entries),
+        "used_count": len(split_map.used_keys),
+        "unused_count": len(unused),
+        "unused_keys": unused,
+    }
+
+
+def rejected_row(
+    row: dict[str, Any],
+    *,
+    index: int,
+    reason: str,
+    error: RuntimeError,
+    source_name: str,
+) -> dict[str, Any]:
+    return {
+        "row_index": index,
+        "source_path": source_name,
+        "line_number": None,
+        "status": "rejected",
+        "reason": reason,
+        "message": str(error),
+        "adapter_name": string_value(
+            adapter_value(row, "name") or row.get("adapter_name") or row.get("benchmark")
+        ),
+        "external_id": string_value(
+            adapter_value(row, "external_id")
+            or row.get("external_id")
+            or row.get("source_task_id")
+            or row.get("task_id")
+        ),
+        "split": string_value(row.get("split") or row.get("local_split")),
+        "source_row_digest": digest_payload(row),
+        "row_keys": sorted(str(key) for key in row),
+    }
+
+
+def adapter_value(row: dict[str, Any], key: str) -> object:
+    adapter = row.get("external_adapter") or row.get("adapter")
+    if isinstance(adapter, dict):
+        return adapter.get(key)
+    return None
+
+
+def dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def first_nonempty(row: dict[str, Any], keys: tuple[str, ...]) -> str | None:

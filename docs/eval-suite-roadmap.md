@@ -308,13 +308,15 @@ CM-0020 added read-only external adapter metadata reports and an
 tau-style task shapes.
 CM-0021 added read-only importers from frozen local external-adapter exports into
 the CM-0020 metadata contract.
+CM-0022 added rejected-row reporting and split-map review artifacts for larger
+frozen imports without changing promotion semantics.
 
 The next increment should target:
 
-1. Add rejected-row reporting and optional split-map review for larger frozen
-   exports where not every row can safely become a local fixture.
-2. Import a tiny real frozen export from one benchmark family and run the full
+1. Import a tiny real frozen export from one benchmark family and run the full
    materialize, adapter-report, and stability-smoke path.
+2. Add source-location preservation for JSONL directory imports so rejected rows
+   can cite file and line number instead of only export name and row index.
 3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
 4. Add sanitized real traces only when their source, fixture version, and split

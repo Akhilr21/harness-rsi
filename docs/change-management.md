@@ -918,3 +918,54 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   tiny real frozen export from one benchmark family and run the complete
   materialize, adapter-report, and stability-smoke path before any live runner
   or simulator adapter work.
+
+## CM-0022: Import Review And Rejected-Row Reporting
+
+- Date: 2026-06-20
+- Files changed: `src/harness_rsi/adapter_importers.py`,
+  `src/harness_rsi/cli.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: larger frozen external-adapter exports need row-level rejection
+  visibility and split-map review before they can safely become local source
+  profiles. A binary “profile written or not” importer hides measurement gaps
+  that later frontier-model or world-model experiments could mistake for
+  benchmark coverage.
+- Change made: extended `benchmark import-adapters` with `--split-map`,
+  `--review-split-map`, and explicit `--allow-rejected-rows` support. Import
+  reports now include source row count, accepted task count, rejected row count,
+  rejection reason counts, accepted/rejected row digests, split-map digest,
+  split-map used/unused entries, and compact non-raw rejected-row records.
+  Strict failures and review-only runs write
+  `benchmarks/_import_reviews/<profile>/import_review.json` without creating a
+  materializable source profile.
+- Gate enforcement: no promotion semantics changed. Import reviews, rejected
+  rows, split maps, and import reports are provenance/import-QA artifacts only.
+  Accepted rows become measurement evidence only after materialization, runs,
+  heldout/regression gates, split-isolation audit, composite gate, and
+  promotion-time digest checks.
+- Frontier/world-model note: for frontier models, CM-0022 makes negative
+  measurement evidence visible before a stronger model can make sparse coverage
+  look good. For Decart/Oasis-style world-model work, this still does not ingest
+  simulator traces, replay interventions, evaluate rollout video/state, or add
+  live simulator validation.
+- Validation run: `pytest` reported 106 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused `pytest tests/test_harness.py` reported 89
+  passing tests after strict review artifacts, partial imports, raw split-label
+  maps, split-map review-only mode, and rejected-row report fields. A CLI smoke
+  wrote a review-only artifact for `cm0022-smoke`, imported the same frozen
+  export with `--allow-rejected-rows`, recorded 3 accepted adapter rows and 1
+  rejected row, materialized the profile, wrote a passing adapter report with
+  zero metadata failures, then ran a one-cycle stability smoke from H0 to H1
+  with zero coverage, environment, efficiency, split-isolation, waiver, heldout,
+  or regression failures.
+- Observation: CM-0021’s fail-closed importer was safe for small fixtures but
+  too opaque for larger frozen exports. Review artifacts provide an audit trail
+  without allowing failed rows to become benchmark evidence by accident.
+- Learning: rejected rows are first-class measurement debt. They are not model
+  failures, but they say exactly where the harness still lacks a replayable,
+  deterministic eval contract.
+- Remediation: next import one tiny real frozen export from one benchmark family
+  and run the complete materialize, adapter-report, and stability-smoke path.
+  Then add source-location preservation for JSONL directory imports so rejected
+  rows can cite file and line number instead of only export name and row index.

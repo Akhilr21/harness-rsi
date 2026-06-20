@@ -132,6 +132,16 @@ promotion-time digest checks. Missing splits, duplicate external fixture IDs,
 live/runner modes, unsupported adapter kinds, and missing deterministic evals
 fail before a source profile is written.
 
+CM-0022 makes larger imports reviewable without relaxing the promotion boundary.
+`import_report.json` now separates accepted task rows from rejected source rows,
+records rejection reason counts, accepted/rejected row digests, and split-map
+review metadata. Strict mode still fails closed on any rejected row. When strict
+mode fails, or when `--review-split-map` is used, the CLI writes a review-only
+artifact under `benchmarks/_import_reviews/<profile>/import_review.json`; that
+directory is not a materializable benchmark source profile. `--allow-rejected-rows`
+can write a partial source profile only if accepted rows still cover train,
+heldout, and regression.
+
 ## Splits
 
 Each benchmark environment has three splits:

@@ -187,6 +187,20 @@ It is still read-only fixture plumbing: no terminal execution, Docker grading,
 tau simulator, run artifact, gate artifact, or promotion decision is created by
 the importer itself.
 
+Larger frozen exports can be reviewed before materialization:
+
+```bash
+harness-rsi benchmark import-adapters \
+  --source /path/to/frozen-export.json \
+  --profile frozen-adapters-v0 \
+  --split-map /path/to/split-map.json \
+  --review-split-map
+```
+
+Strict import remains the default. Rejected rows block profile creation unless
+`--allow-rejected-rows` is explicit, and strict failures write a review-only
+artifact under `benchmarks/_import_reviews/<profile>/import_review.json`.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic
