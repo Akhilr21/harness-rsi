@@ -969,3 +969,60 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   and run the complete materialize, adapter-report, and stability-smoke path.
   Then add source-location preservation for JSONL directory imports so rejected
   rows can cite file and line number instead of only export name and row index.
+
+## CM-0023: SWE-Bench Lite Frozen Export Smoke
+
+- Date: 2026-06-21
+- Files changed:
+  `benchmarks/_frozen_exports/swe-bench-lite-smoke-v0/README.md`,
+  `benchmarks/_frozen_exports/swe-bench-lite-smoke-v0/tasks.json`,
+  `benchmarks/_frozen_exports/swe-bench-lite-smoke-v0/split-map.json`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: one tiny real frozen benchmark-family export can enter the local
+  harness without weakening the fixed-model Hn/Hn+1 measurement contract. The
+  useful proof is not a public leaderboard score; it is whether source identity,
+  split mapping, fixture version, evaluator digest, materialization, adapter
+  reporting, and no-promote stability evidence all survive the same local path.
+- Change made: added `swe-bench-lite-smoke-v0`, a committed frozen export with
+  three public SWE-bench Lite instance IDs mapped into local `train`, `heldout`,
+  and `regression` roles by `split-map.json`. The local evaluator is
+  identity-only and deterministic, so the fixture proves import plumbing and
+  provenance rather than patch correctness. Added an end-to-end test that imports
+  the fixture, asserts import-report identity, materializes the source profile,
+  asserts coverage and adapter report identity, and runs a one-cycle no-promote
+  stability smoke.
+- Gate enforcement: no promotion semantics changed. The committed export,
+  split map, import report, and adapter report remain provenance/import-QA
+  artifacts. They matter for promotion only after materialization, run evidence,
+  heldout/regression gates, split-isolation audit, composite gate, and
+  promotion-time digest checks. The stability smoke uses `--no-promote` to prove
+  validation without mutating the promoted parent chain.
+- Frontier/world-model note: for frontier coding models, this makes the first
+  real public benchmark identity available inside the local harness without
+  claiming benchmark resolution ability. For Decart/Oasis-style world-model
+  work, nothing changes: this does not add simulator traces, intervention
+  replay, live state validation, video/state rollouts, or world-model adapters.
+- Validation run: `pytest` reported 107 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused pytest for
+  `test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture`
+  reported 1 passing test after exercising import, materialization, adapter
+  reporting, and one no-promote stability cycle. A CLI smoke in
+  `/private/tmp/harness-rsi-cm0023.mZ0BQq` imported the committed SWE-bench Lite
+  fixture with split-map usage 3/3, materialized
+  `swe-bench-lite-smoke-v0`, wrote a passing read-only adapter report with 3
+  adapter rows and zero metadata failures, then ran a one-cycle no-promote
+  stability smoke from H0 to `DryRun1` with zero coverage, environment,
+  efficiency, split-isolation, waiver, heldout, or regression failures.
+- Observation: the importer contract was already strong enough to ingest a real
+  public benchmark-family fixture once the source stayed tiny and the split
+  roles were explicit. The critical boundary is naming the local evaluator as
+  identity-only so a passing smoke cannot be mistaken for SWE-bench patch
+  grading.
+- Learning: real benchmark rows are useful early when they test provenance and
+  replayability, not when they force the project to adopt a full external runner
+  before the local gate contract is stable.
+- Remediation: next add source-location preservation for JSONL directory imports
+  so rejected rows can cite file and line number. Then add equally tiny
+  Terminal-Bench and tau-style frozen exports before live runners, Docker
+  grading, or simulator loops.

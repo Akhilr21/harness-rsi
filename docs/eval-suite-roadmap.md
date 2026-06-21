@@ -256,6 +256,9 @@ harness component.
   SWE-bench, and tau/tau3-style task sources preserve source IDs, fixture
   versions, source URLs, split mapping, evaluator identity, and read-only mode
   before any external runner is wired in.
+- **Level 5: Tiny real frozen-export smoke** imports one public benchmark-family
+  fixture, materializes it, writes the read-only adapter report, and runs a
+  no-promote stability cycle without adding live external runners.
 
 External adapters should wait until Levels 0 through 3 are boring and stable.
 
@@ -310,13 +313,16 @@ CM-0021 added read-only importers from frozen local external-adapter exports int
 the CM-0020 metadata contract.
 CM-0022 added rejected-row reporting and split-map review artifacts for larger
 frozen imports without changing promotion semantics.
+CM-0023 added `swe-bench-lite-smoke-v0`, a tiny public SWE-bench Lite frozen
+export that runs through import, materialization, adapter report, and no-promote
+stability smoke with identity-only local evaluators.
 
 The next increment should target:
 
-1. Import a tiny real frozen export from one benchmark family and run the full
-   materialize, adapter-report, and stability-smoke path.
-2. Add source-location preservation for JSONL directory imports so rejected rows
+1. Add source-location preservation for JSONL directory imports so rejected rows
    can cite file and line number instead of only export name and row index.
+2. Import tiny real frozen exports from Terminal-Bench and tau-style families
+   after their source identity and local split contracts are equally explicit.
 3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
 4. Add sanitized real traces only when their source, fixture version, and split

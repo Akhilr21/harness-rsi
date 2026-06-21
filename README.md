@@ -201,6 +201,31 @@ Strict import remains the default. Rejected rows block profile creation unless
 `--allow-rejected-rows` is explicit, and strict failures write a review-only
 artifact under `benchmarks/_import_reviews/<profile>/import_review.json`.
 
+A tiny committed SWE-bench Lite fixture exercises the same path with real public
+benchmark identities:
+
+```bash
+harness-rsi benchmark import-adapters \
+  --source benchmarks/_frozen_exports/swe-bench-lite-smoke-v0/tasks.json \
+  --profile swe-bench-lite-smoke-v0 \
+  --split-map benchmarks/_frozen_exports/swe-bench-lite-smoke-v0/split-map.json
+harness-rsi benchmark init --name swe-bench-lite-smoke-v0
+harness-rsi benchmark adapters --benchmark swe-bench-lite-smoke-v0
+harness-rsi experiment stability \
+  --parent H0 \
+  --candidate-prefix DryRun \
+  --first-candidate-index 1 \
+  --cycles 1 \
+  --benchmark swe-bench-lite-smoke-v0 \
+  --mock \
+  --no-promote
+```
+
+This smoke fixture is identity-only. It preserves SWE-bench Lite instance IDs,
+source URLs, local split mapping, fixture versions, evaluator digests, and
+read-only adapter metadata. It does not clone repositories, run Docker, generate
+patches, or claim SWE-bench score evidence.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic

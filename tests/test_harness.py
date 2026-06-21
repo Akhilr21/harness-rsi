@@ -474,6 +474,121 @@ def test_benchmark_import_adapters_uses_split_map_for_missing_splits(
         assert manifest["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
 
 
+def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "_frozen_exports"
+        / "swe-bench-lite-smoke-v0"
+    )
+    with working_dir(tmp_path):
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(fixture / "tasks.json"),
+                    "--profile",
+                    "swe-bench-lite-smoke-v0",
+                    "--split-map",
+                    str(fixture / "split-map.json"),
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Task count: 3" in output
+        assert "Split map: split-map.json used=3 unused=0" in output
+
+        source_profile = tmp_path / "benchmarks" / "swe-bench-lite-smoke-v0"
+        import_report = read_json(source_profile / "import_report.json")
+        assert import_report["status"] == "pass"
+        assert import_report["read_only"] is True
+        assert import_report["gate_semantics_changed"] is False
+        assert import_report["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert import_report["source_export_name"] == "tasks.json"
+        assert import_report["source_row_count"] == 3
+        assert import_report["imported_row_count"] == 3
+        assert import_report["rejected_row_count"] == 0
+        assert import_report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        assert import_report["kind_counts"] == {"swe_patch": 3}
+        assert import_report["adapter_counts"] == {"swe-bench": 3}
+        assert import_report["fixture_versions"] == {
+            "swe-bench": ["swe-bench-lite-smoke-v0.1"]
+        }
+        assert import_report["split_map"]["provided"] is True
+        assert import_report["split_map"]["used_count"] == 3
+        assert import_report["split_map"]["unused_count"] == 0
+        assert import_report["metadata_failures"] == []
+        assert import_report["source_export_digest"]
+        assert import_report["import_report_digest"]
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+
+        assert main(["benchmark", "init", "--name", "swe-bench-lite-smoke-v0"]) == 0
+        materialized = tmp_path / ".rsi" / "benchmarks" / "swe-bench-lite-smoke-v0"
+        manifest = read_json(materialized / "manifest.json")
+        assert manifest["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert manifest["source_export_digest"] == import_report["source_export_digest"]
+        assert manifest["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
+        assert manifest["environments"] == ["coding_micro"]
+        assert manifest["families"] == ["issue_patch_planning"]
+        assert manifest["split_map"]["used_count"] == 3
+        heldout = read_jsonl(materialized / "heldout.jsonl")
+        assert heldout[0]["external_adapter"] == {
+            "external_id": "sqlfluff__sqlfluff-2419",
+            "fixture_version": "swe-bench-lite-smoke-v0.1",
+            "kind": "swe_patch",
+            "mode": "read_only",
+            "name": "swe-bench",
+            "source_url": "https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite",
+        }
+        assert heldout[0]["source"] == (
+            "princeton-nlp/SWE-bench_Lite/test/sqlfluff__sqlfluff-2419"
+        )
+        assert heldout[0]["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert heldout[0]["evaluator_digest"] == evaluator_digest(heldout[0]["eval"])
+        coverage = read_json(materialized / "coverage.json")
+        assert coverage["missing_required_cells"] == []
+        assert coverage["coverage_policy"]["fail_on_missing_required"] is True
+
+        assert main(["benchmark", "adapters", "--benchmark", "swe-bench-lite-smoke-v0"]) == 0
+        adapter_report = read_json(materialized / "adapter_report.json")
+        assert adapter_report["status"] == "pass"
+        assert adapter_report["read_only"] is True
+        assert adapter_report["gate_semantics_changed"] is False
+        assert adapter_report["external_adapter_task_count"] == 3
+        assert adapter_report["metadata_failures"] == []
+
+        stability_path = run_experiment_stability(
+            parent="H0",
+            candidate_prefix="DryRun",
+            first_candidate_index=1,
+            cycles=1,
+            benchmark="swe-bench-lite-smoke-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=False,
+        )
+        stability = read_json(stability_path)
+        assert stability["status"] == "pass"
+        assert stability["validation_status"] == "pass"
+        assert stability["promotion_status"] == "not_requested"
+        assert stability["final_parent"] == "H0"
+        assert stability["completed_cycles"] == 1
+        assert stability["cycles"][0]["validation_passed"] is True
+        assert read_json(tmp_path / ".rsi" / "harnesses" / "DryRun1.json")[
+            "status"
+        ] == "candidate"
+
+
 def test_benchmark_import_adapters_maps_raw_split_labels(
     tmp_path: Path,
 ) -> None:

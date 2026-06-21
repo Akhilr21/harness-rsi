@@ -142,6 +142,15 @@ directory is not a materializable benchmark source profile. `--allow-rejected-ro
 can write a partial source profile only if accepted rows still cover train,
 heldout, and regression.
 
+CM-0023 adds the first tiny real frozen export smoke:
+`benchmarks/_frozen_exports/swe-bench-lite-smoke-v0`. The committed export uses
+three public SWE-bench Lite instance IDs and a split map that assigns them to
+local train, heldout, and regression roles. The local evaluator checks fixture
+identity only, so this is still adapter plumbing and provenance evidence, not
+SWE-bench patch-grading evidence. The smoke path is:
+`benchmark import-adapters` -> `benchmark init` -> `benchmark adapters` ->
+one no-promote `experiment stability` cycle.
+
 ## Splits
 
 Each benchmark environment has three splits:
