@@ -230,6 +230,45 @@ source URLs, local split mapping, fixture versions, evaluator digests, and
 read-only adapter metadata. It does not clone repositories, run Docker, generate
 patches, or claim SWE-bench score evidence.
 
+The same identity-only smoke pattern is available for Terminal-Bench and
+tau2-bench retail fixtures:
+
+```bash
+harness-rsi benchmark import-adapters \
+  --source benchmarks/_frozen_exports/terminal-bench-smoke-v0/tasks.json \
+  --profile terminal-bench-smoke-v0 \
+  --split-map benchmarks/_frozen_exports/terminal-bench-smoke-v0/split-map.json
+harness-rsi benchmark init --name terminal-bench-smoke-v0
+harness-rsi benchmark adapters --benchmark terminal-bench-smoke-v0
+harness-rsi experiment stability \
+  --parent H0 \
+  --candidate-prefix DryRunTerminal \
+  --first-candidate-index 1 \
+  --cycles 1 \
+  --benchmark terminal-bench-smoke-v0 \
+  --mock \
+  --no-promote
+
+harness-rsi benchmark import-adapters \
+  --source benchmarks/_frozen_exports/tau2-bench-retail-smoke-v0/tasks.json \
+  --profile tau2-bench-retail-smoke-v0 \
+  --split-map benchmarks/_frozen_exports/tau2-bench-retail-smoke-v0/split-map.json
+harness-rsi benchmark init --name tau2-bench-retail-smoke-v0
+harness-rsi benchmark adapters --benchmark tau2-bench-retail-smoke-v0
+harness-rsi experiment stability \
+  --parent H0 \
+  --candidate-prefix DryRunTau \
+  --first-candidate-index 1 \
+  --cycles 1 \
+  --benchmark tau2-bench-retail-smoke-v0 \
+  --mock \
+  --no-promote
+```
+
+These fixtures preserve public task identities and adapter metadata only. They
+do not execute Terminal-Bench tasks, run Docker, launch tau user simulators,
+mutate tau databases, or claim benchmark scores.
+
 ## Enhanced Eval Suite
 
 `sim-v0` is the first named eval-suite layer above the starter synthetic

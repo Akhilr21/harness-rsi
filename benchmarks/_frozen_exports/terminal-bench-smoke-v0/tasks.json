@@ -1,0 +1,44 @@
+{
+  "adapter_contract_version": "adapter-contract-v0.1",
+  "fixture_version": "terminal-bench-smoke-v0.1",
+  "source_url": "https://github.com/harbor-framework/terminal-bench",
+  "suite_version": "terminal-bench-smoke-v0.1",
+  "tasks": [
+    {
+      "benchmark": "terminal-bench",
+      "category": "system-administration",
+      "difficulty": "medium",
+      "expected": "terminal-bench original-tasks/acl-permissions-inheritance",
+      "external_id": "original-tasks/acl-permissions-inheritance",
+      "id": "terminal_train_acl_permissions_inheritance",
+      "instruction": "Return exactly terminal-bench original-tasks/acl-permissions-inheritance.",
+      "source": "harbor-framework/terminal-bench/original-tasks/acl-permissions-inheritance",
+      "source_split": "original-tasks",
+      "source_task_id": "acl-permissions-inheritance"
+    },
+    {
+      "benchmark": "terminal-bench",
+      "category": "data-science",
+      "difficulty": "easy",
+      "expected": "terminal-bench original-tasks/analyze-access-logs",
+      "external_id": "original-tasks/analyze-access-logs",
+      "id": "terminal_heldout_analyze_access_logs",
+      "instruction": "Return exactly terminal-bench original-tasks/analyze-access-logs.",
+      "source": "harbor-framework/terminal-bench/original-tasks/analyze-access-logs",
+      "source_split": "original-tasks",
+      "source_task_id": "analyze-access-logs"
+    },
+    {
+      "benchmark": "terminal-bench",
+      "category": "software-engineering",
+      "difficulty": "easy",
+      "expected": "terminal-bench original-tasks/broken-python",
+      "external_id": "original-tasks/broken-python",
+      "id": "terminal_regression_broken_python",
+      "instruction": "Return exactly terminal-bench original-tasks/broken-python.",
+      "source": "harbor-framework/terminal-bench/original-tasks/broken-python",
+      "source_split": "original-tasks",
+      "source_task_id": "broken-python"
+    }
+  ]
+}

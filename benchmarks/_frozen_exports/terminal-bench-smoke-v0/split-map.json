@@ -1,0 +1,7 @@
+{
+  "splits": {
+    "original-tasks/acl-permissions-inheritance": "train",
+    "original-tasks/analyze-access-logs": "heldout",
+    "original-tasks/broken-python": "regression"
+  }
+}

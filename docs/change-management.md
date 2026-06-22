@@ -1078,3 +1078,68 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   and tau-style families with explicit source identity and split contracts.
   Consider a small import-audit query command only if JSON reports become
   difficult to inspect manually.
+
+## CM-0025: Terminal-Bench And Tau2-Bench Frozen Export Smokes
+
+- Date: 2026-06-22
+- Files changed:
+  `benchmarks/_frozen_exports/terminal-bench-smoke-v0/README.md`,
+  `benchmarks/_frozen_exports/terminal-bench-smoke-v0/tasks.json`,
+  `benchmarks/_frozen_exports/terminal-bench-smoke-v0/split-map.json`,
+  `benchmarks/_frozen_exports/tau2-bench-retail-smoke-v0/README.md`,
+  `benchmarks/_frozen_exports/tau2-bench-retail-smoke-v0/tasks.json`,
+  `benchmarks/_frozen_exports/tau2-bench-retail-smoke-v0/split-map.json`,
+  `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: after the SWE-Bench Lite frozen smoke and JSONL source-location
+  auditability, equally tiny real frozen exports from Terminal-Bench and
+  tau2-bench retail can broaden adapter-family coverage without changing the
+  fixed-model Hn/Hn+1 measurement contract. The useful proof is source identity,
+  local split mapping, fixture version, evaluator digest, materialization,
+  adapter reporting, and no-promote stability evidence, not public benchmark
+  execution or leaderboard scoring.
+- Change made: added committed frozen exports for `terminal-bench-smoke-v0` and
+  `tau2-bench-retail-smoke-v0`. Each fixture preserves three public source task
+  identities and maps them into local `train`, `heldout`, and `regression`
+  roles with explicit split maps. The local evaluators are identity-only and
+  deterministic, so these fixtures prove import plumbing, provenance, and
+  adapter metadata parity rather than terminal task execution, Docker grading,
+  user-simulator behavior, tau database mutation, or end-to-end task success.
+  The existing SWE-bench Lite smoke test was factored into a shared helper and
+  reused for all three public frozen-export smoke profiles.
+- Gate enforcement: no promotion semantics changed. The frozen exports, split
+  maps, import reports, adapter reports, and any rejected-row records remain
+  provenance/import-QA artifacts. They matter for promotion only after the
+  existing materialization, run evidence, heldout/regression gates,
+  split-isolation audit, composite gate, and promotion-time digest checks
+  consume them. The stability smoke path uses `--no-promote`.
+- Frontier/world-model note: for frontier models, CM-0025 broadens real public
+  benchmark identity across terminal and tool-agent-user task families while
+  preserving the same fixed-model comparison rule. It does not claim that a
+  frontier model can solve Terminal-Bench or tau2-bench tasks inside this
+  harness. For Decart/Oasis-style world-model work, nothing changes: this does
+  not ingest simulator traces, replay interventions, evaluate rollout
+  video/state, run a live simulator, or add a world-model adapter.
+- Validation run: `pytest` reported 111 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused pytest for the SWE-bench Lite,
+  Terminal-Bench, and tau2-bench retail smoke fixtures reported 3 passing tests.
+  A CLI smoke in `/private/tmp/harness-rsi-cm0025.cJ1YvQ` imported and
+  materialized `terminal-bench-smoke-v0` and `tau2-bench-retail-smoke-v0`,
+  wrote passing read-only adapter reports for both profiles with zero metadata
+  failures, then ran one-cycle no-promote stability smokes from H0 to
+  `DryRunTerminal1` and `DryRunTau1` with zero coverage, environment,
+  efficiency, split-isolation, waiver, heldout, or regression failures.
+- Observation: the same import/materialize/adapter/stability contract handled
+  SWE patch, terminal, and tool-agent-user metadata once each family was reduced
+  to explicit public task identity plus deterministic local eval. The useful
+  additional coverage came from changing adapter families, not adding live
+  runner complexity.
+- Learning: public benchmark identity is useful before public benchmark
+  execution only when the local evaluator boundary is unmistakable. The harness
+  can first learn whether it preserves source identity, split contracts, and
+  adapter metadata before it learns whether it can grade the original benchmark.
+- Remediation: next add an import-audit query command only if JSON reports
+  become difficult to inspect manually. Defer live Terminal-Bench execution,
+  tau simulators, Docker grading, and Decart/Oasis-style simulator adapters to
+  separate CM entries with explicit runner contracts and gate-policy review.

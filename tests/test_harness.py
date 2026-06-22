@@ -584,11 +584,86 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
     tmp_path: Path,
     capsys,
 ) -> None:
+    assert_frozen_export_smoke_fixture(
+        tmp_path,
+        capsys,
+        profile="swe-bench-lite-smoke-v0",
+        suite_version="swe-bench-lite-smoke-v0.1",
+        adapter_name="swe-bench",
+        adapter_kind="swe_patch",
+        fixture_version="swe-bench-lite-smoke-v0.1",
+        source_url="https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite",
+        environment="coding_micro",
+        family="issue_patch_planning",
+        heldout_external_id="sqlfluff__sqlfluff-2419",
+        heldout_source="princeton-nlp/SWE-bench_Lite/test/sqlfluff__sqlfluff-2419",
+        candidate_prefix="DryRunSwe",
+    )
+
+
+def test_benchmark_import_adapters_materializes_terminal_bench_smoke_fixture(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert_frozen_export_smoke_fixture(
+        tmp_path,
+        capsys,
+        profile="terminal-bench-smoke-v0",
+        suite_version="terminal-bench-smoke-v0.1",
+        adapter_name="terminal-bench",
+        adapter_kind="terminal",
+        fixture_version="terminal-bench-smoke-v0.1",
+        source_url="https://github.com/harbor-framework/terminal-bench",
+        environment="terminal_ops",
+        family="terminal_task_planning",
+        heldout_external_id="original-tasks/analyze-access-logs",
+        heldout_source="harbor-framework/terminal-bench/original-tasks/analyze-access-logs",
+        candidate_prefix="DryRunTerminal",
+    )
+
+
+def test_benchmark_import_adapters_materializes_tau2_bench_retail_smoke_fixture(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert_frozen_export_smoke_fixture(
+        tmp_path,
+        capsys,
+        profile="tau2-bench-retail-smoke-v0",
+        suite_version="tau2-bench-retail-smoke-v0.1",
+        adapter_name="tau2-bench",
+        adapter_kind="tool_agent_user",
+        fixture_version="tau2-bench-retail-smoke-v0.1",
+        source_url="https://github.com/sierra-research/tau2-bench",
+        environment="customer_support",
+        family="tool_agent_user",
+        heldout_external_id="retail:5",
+        heldout_source="sierra-research/tau2-bench/data/tau2/domains/retail/tasks.json#5",
+        candidate_prefix="DryRunTau",
+    )
+
+
+def assert_frozen_export_smoke_fixture(
+    tmp_path: Path,
+    capsys,
+    *,
+    profile: str,
+    suite_version: str,
+    adapter_name: str,
+    adapter_kind: str,
+    fixture_version: str,
+    source_url: str,
+    environment: str,
+    family: str,
+    heldout_external_id: str,
+    heldout_source: str,
+    candidate_prefix: str,
+) -> None:
     fixture = (
         Path(__file__).resolve().parents[1]
         / "benchmarks"
         / "_frozen_exports"
-        / "swe-bench-lite-smoke-v0"
+        / profile
     )
     with working_dir(tmp_path):
         assert (
@@ -599,7 +674,7 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
                     "--source",
                     str(fixture / "tasks.json"),
                     "--profile",
-                    "swe-bench-lite-smoke-v0",
+                    profile,
                     "--split-map",
                     str(fixture / "split-map.json"),
                 ]
@@ -610,22 +685,20 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
         assert "Task count: 3" in output
         assert "Split map: split-map.json used=3 unused=0" in output
 
-        source_profile = tmp_path / "benchmarks" / "swe-bench-lite-smoke-v0"
+        source_profile = tmp_path / "benchmarks" / profile
         import_report = read_json(source_profile / "import_report.json")
         assert import_report["status"] == "pass"
         assert import_report["read_only"] is True
         assert import_report["gate_semantics_changed"] is False
-        assert import_report["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert import_report["suite_version"] == suite_version
         assert import_report["source_export_name"] == "tasks.json"
         assert import_report["source_row_count"] == 3
         assert import_report["imported_row_count"] == 3
         assert import_report["rejected_row_count"] == 0
         assert import_report["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
-        assert import_report["kind_counts"] == {"swe_patch": 3}
-        assert import_report["adapter_counts"] == {"swe-bench": 3}
-        assert import_report["fixture_versions"] == {
-            "swe-bench": ["swe-bench-lite-smoke-v0.1"]
-        }
+        assert import_report["kind_counts"] == {adapter_kind: 3}
+        assert import_report["adapter_counts"] == {adapter_name: 3}
+        assert import_report["fixture_versions"] == {adapter_name: [fixture_version]}
         assert import_report["split_map"]["provided"] is True
         assert import_report["split_map"]["used_count"] == 3
         assert import_report["split_map"]["unused_count"] == 0
@@ -635,34 +708,32 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
         assert not (tmp_path / ".rsi" / "runs").exists()
         assert not (tmp_path / ".rsi" / "gates").exists()
 
-        assert main(["benchmark", "init", "--name", "swe-bench-lite-smoke-v0"]) == 0
-        materialized = tmp_path / ".rsi" / "benchmarks" / "swe-bench-lite-smoke-v0"
+        assert main(["benchmark", "init", "--name", profile]) == 0
+        materialized = tmp_path / ".rsi" / "benchmarks" / profile
         manifest = read_json(materialized / "manifest.json")
-        assert manifest["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert manifest["suite_version"] == suite_version
         assert manifest["source_export_digest"] == import_report["source_export_digest"]
         assert manifest["split_counts"] == {"heldout": 1, "regression": 1, "train": 1}
-        assert manifest["environments"] == ["coding_micro"]
-        assert manifest["families"] == ["issue_patch_planning"]
+        assert manifest["environments"] == [environment]
+        assert manifest["families"] == [family]
         assert manifest["split_map"]["used_count"] == 3
         heldout = read_jsonl(materialized / "heldout.jsonl")
         assert heldout[0]["external_adapter"] == {
-            "external_id": "sqlfluff__sqlfluff-2419",
-            "fixture_version": "swe-bench-lite-smoke-v0.1",
-            "kind": "swe_patch",
+            "external_id": heldout_external_id,
+            "fixture_version": fixture_version,
+            "kind": adapter_kind,
             "mode": "read_only",
-            "name": "swe-bench",
-            "source_url": "https://huggingface.co/datasets/princeton-nlp/SWE-bench_Lite",
+            "name": adapter_name,
+            "source_url": source_url,
         }
-        assert heldout[0]["source"] == (
-            "princeton-nlp/SWE-bench_Lite/test/sqlfluff__sqlfluff-2419"
-        )
-        assert heldout[0]["suite_version"] == "swe-bench-lite-smoke-v0.1"
+        assert heldout[0]["source"] == heldout_source
+        assert heldout[0]["suite_version"] == suite_version
         assert heldout[0]["evaluator_digest"] == evaluator_digest(heldout[0]["eval"])
         coverage = read_json(materialized / "coverage.json")
         assert coverage["missing_required_cells"] == []
         assert coverage["coverage_policy"]["fail_on_missing_required"] is True
 
-        assert main(["benchmark", "adapters", "--benchmark", "swe-bench-lite-smoke-v0"]) == 0
+        assert main(["benchmark", "adapters", "--benchmark", profile]) == 0
         adapter_report = read_json(materialized / "adapter_report.json")
         assert adapter_report["status"] == "pass"
         assert adapter_report["read_only"] is True
@@ -672,10 +743,10 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
 
         stability_path = run_experiment_stability(
             parent="H0",
-            candidate_prefix="DryRun",
+            candidate_prefix=candidate_prefix,
             first_candidate_index=1,
             cycles=1,
-            benchmark="swe-bench-lite-smoke-v0",
+            benchmark=profile,
             model=None,
             reasoning_effort="medium",
             mock=True,
@@ -690,7 +761,7 @@ def test_benchmark_import_adapters_materializes_swe_bench_lite_smoke_fixture(
         assert stability["final_parent"] == "H0"
         assert stability["completed_cycles"] == 1
         assert stability["cycles"][0]["validation_passed"] is True
-        assert read_json(tmp_path / ".rsi" / "harnesses" / "DryRun1.json")[
+        assert read_json(tmp_path / ".rsi" / "harnesses" / f"{candidate_prefix}1.json")[
             "status"
         ] == "candidate"
 

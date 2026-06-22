@@ -318,13 +318,16 @@ export that runs through import, materialization, adapter report, and no-promote
 stability smoke with identity-only local evaluators.
 CM-0024 added source-directory-relative file and 1-based line preservation for
 rejected rows from directory JSONL imports.
+CM-0025 added tiny public Terminal-Bench and tau2-bench retail frozen exports
+that run through import, materialization, adapter report, and no-promote
+stability smoke with identity-only local evaluators.
 
 The next increment should target:
 
-1. Import tiny real frozen exports from Terminal-Bench and tau-style families
-   after their source identity and local split contracts are equally explicit.
-2. Add a small import-audit query command if review artifacts become hard to
+1. Add a small import-audit query command if review artifacts become hard to
    inspect from JSON alone.
+2. Keep live Terminal-Bench execution and tau simulators behind explicit runner
+   contracts, source identity, cost/tool tracking, and gate-policy review.
 3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
 4. Add sanitized real traces only when their source, fixture version, and split

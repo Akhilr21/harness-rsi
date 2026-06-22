@@ -1,0 +1,41 @@
+{
+  "adapter_contract_version": "adapter-contract-v0.1",
+  "fixture_version": "tau2-bench-retail-smoke-v0.1",
+  "source_url": "https://github.com/sierra-research/tau2-bench",
+  "suite_version": "tau2-bench-retail-smoke-v0.1",
+  "tasks": [
+    {
+      "benchmark": "tau2-bench",
+      "domain": "retail",
+      "expected": "tau2-bench retail:0",
+      "external_id": "retail:0",
+      "id": "tau2_train_retail_0",
+      "instruction": "Return exactly tau2-bench retail:0.",
+      "source": "sierra-research/tau2-bench/data/tau2/domains/retail/tasks.json#0",
+      "source_split": "train",
+      "source_task_id": "0"
+    },
+    {
+      "benchmark": "tau2-bench",
+      "domain": "retail",
+      "expected": "tau2-bench retail:5",
+      "external_id": "retail:5",
+      "id": "tau2_heldout_retail_5",
+      "instruction": "Return exactly tau2-bench retail:5.",
+      "source": "sierra-research/tau2-bench/data/tau2/domains/retail/tasks.json#5",
+      "source_split": "test",
+      "source_task_id": "5"
+    },
+    {
+      "benchmark": "tau2-bench",
+      "domain": "retail",
+      "expected": "tau2-bench retail:9",
+      "external_id": "retail:9",
+      "id": "tau2_regression_retail_9",
+      "instruction": "Return exactly tau2-bench retail:9.",
+      "source": "sierra-research/tau2-bench/data/tau2/domains/retail/tasks.json#9",
+      "source_split": "test",
+      "source_task_id": "9"
+    }
+  ]
+}

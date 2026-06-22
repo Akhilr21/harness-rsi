@@ -158,6 +158,13 @@ never receive that importer-side provenance in the source profile. This is
 provenance precision only; it does not alter run, gate, coverage,
 composite-gate, or promotion semantics.
 
+CM-0025 widens tiny real frozen-export coverage to Terminal-Bench and
+tau2-bench retail task identities. Both fixtures follow the CM-0023 pattern:
+three public source IDs, explicit local split maps, deterministic identity-only
+evaluators, materialization, adapter reporting, and no-promote stability smoke.
+They do not execute terminal tasks, launch Docker, run tau user simulators,
+mutate tau databases, or add live external-runner evidence.
+
 ## Splits
 
 Each benchmark environment has three splits:
