@@ -50,11 +50,18 @@ DEFAULT_ADAPTERS = {
 
 
 @dataclass(frozen=True)
+class SourceLocation:
+    source_path: str
+    line_number: int | None
+
+
+@dataclass(frozen=True)
 class FrozenExport:
     rows: list[dict[str, Any]]
     defaults: dict[str, Any]
     source_name: str
     source_digest: str
+    source_locations: list[SourceLocation]
 
 
 @dataclass
@@ -149,12 +156,13 @@ def read_frozen_export(source: Path) -> FrozenExport:
     if source.is_dir():
         return read_export_directory(source)
     if source.suffix == ".jsonl":
-        rows = read_export_jsonl(source)
+        rows, source_locations = read_export_jsonl(source)
         return FrozenExport(
             rows=rows,
             defaults={},
             source_name=source.name,
             source_digest=digest_payload({"file": source.name, "rows": rows}),
+            source_locations=source_locations,
         )
     if source.suffix == ".json":
         payload = read_json(source)
@@ -164,6 +172,7 @@ def read_frozen_export(source: Path) -> FrozenExport:
             defaults=defaults,
             source_name=source.name,
             source_digest=digest_payload({"file": source.name, "payload": payload}),
+            source_locations=source_locations_for_rows(rows, source.name),
         )
     raise RuntimeError(f"Unsupported frozen export format: {source}")
 
@@ -177,27 +186,36 @@ def read_export_directory(source: Path) -> FrozenExport:
             defaults=defaults,
             source_name=source.name,
             source_digest=digest_payload({"directory": source.name, "tasks": payload}),
+            source_locations=source_locations_for_rows(rows, source.name),
         )
 
     files = sorted(source.rglob("*.jsonl"))
     if not files:
         raise RuntimeError(f"Frozen export directory has no JSONL task files: {source}")
     rows: list[dict[str, Any]] = []
+    source_locations: list[SourceLocation] = []
     digest_files = []
     for path in files:
-        file_rows = read_export_jsonl(path)
+        file_rows, file_locations = read_export_jsonl(path, source_root=source)
         rows.extend(file_rows)
+        source_locations.extend(file_locations)
         digest_files.append({"path": str(path.relative_to(source)), "rows": file_rows})
     return FrozenExport(
         rows=rows,
         defaults={},
         source_name=source.name,
         source_digest=digest_payload({"directory": source.name, "files": digest_files}),
+        source_locations=source_locations,
     )
 
 
-def read_export_jsonl(path: Path) -> list[dict[str, Any]]:
+def read_export_jsonl(
+    path: Path,
+    *,
+    source_root: Path | None = None,
+) -> tuple[list[dict[str, Any]], list[SourceLocation]]:
     rows = []
+    source_locations = []
     for line_number, line in enumerate(path.read_text().splitlines(), start=1):
         if not line.strip():
             continue
@@ -208,7 +226,13 @@ def read_export_jsonl(path: Path) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             raise RuntimeError(f"Frozen export row at {path}:{line_number} must be an object.")
         rows.append(row)
-    return rows
+        source_locations.append(
+            SourceLocation(
+                line_number=line_number,
+                source_path=str(path.relative_to(source_root)) if source_root else path.name,
+            )
+        )
+    return rows, source_locations
 
 
 def rows_and_defaults_from_payload(
@@ -233,6 +257,10 @@ def rows_and_defaults_from_payload(
         if key in payload
     }
     return rows, defaults
+
+
+def source_locations_for_rows(rows: list[dict[str, Any]], source_name: str) -> list[SourceLocation]:
+    return [SourceLocation(source_path=source_name, line_number=None) for _ in rows]
 
 
 def source_profile_output(profile: str) -> Path:
@@ -285,7 +313,10 @@ def normalize_export_rows(
     seen_ids: dict[str, set[str]] = {split: set() for split in REQUIRED_SPLITS}
     seen_external_ids: dict[tuple[str, str], str] = {}
     rejected_rows: list[dict[str, Any]] = []
+    if len(export.source_locations) != len(export.rows):
+        raise RuntimeError("Frozen export row/source-location counts do not match.")
     for index, row in enumerate(export.rows, start=1):
+        source_location = export.source_locations[index - 1]
         try:
             normalized = normalize_export_row(
                 row,
@@ -301,7 +332,7 @@ def normalize_export_rows(
                     index=index,
                     reason="invalid_row",
                     error=error,
-                    source_name=export.source_name,
+                    source_location=source_location,
                 )
             )
             continue
@@ -315,7 +346,7 @@ def normalize_export_rows(
                     error=RuntimeError(
                         f"Duplicate imported task id {normalized['id']} in {split} split."
                     ),
-                    source_name=export.source_name,
+                    source_location=source_location,
                 )
             )
             continue
@@ -332,7 +363,7 @@ def normalize_export_rows(
                         f"{adapter['external_id']} for {adapter['name']} in "
                         f"{seen_external_ids[external_key]} and {split} splits."
                     ),
-                    source_name=export.source_name,
+                    source_location=source_location,
                 )
             )
             continue
@@ -768,12 +799,12 @@ def rejected_row(
     index: int,
     reason: str,
     error: RuntimeError,
-    source_name: str,
+    source_location: SourceLocation,
 ) -> dict[str, Any]:
     return {
         "row_index": index,
-        "source_path": source_name,
-        "line_number": None,
+        "source_path": source_location.source_path,
+        "line_number": source_location.line_number,
         "status": "rejected",
         "reason": reason,
         "message": str(error),

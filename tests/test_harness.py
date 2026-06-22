@@ -377,6 +377,112 @@ def test_benchmark_import_adapters_allows_rejected_rows_with_report(
         assert not (tmp_path / ".rsi" / "gates").exists()
 
 
+def test_benchmark_import_adapters_preserves_jsonl_rejected_row_source_location(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export_dir = tmp_path / "jsonl-directory-export"
+        export_file = export_dir / "partitions" / "adapter.jsonl"
+        export_file.parent.mkdir(parents=True)
+        rows = [
+            frozen_adapter_row(
+                "jsonl-train",
+                "train",
+                "terminal-bench",
+                "jsonl-train",
+                fixture_version="jsonl-source-v1",
+            ),
+            frozen_adapter_row(
+                "jsonl-bad",
+                "heldout",
+                "swe-bench",
+                "jsonl-bad",
+                fixture_version="jsonl-source-v1",
+            ),
+            frozen_adapter_row(
+                "jsonl-heldout",
+                "heldout",
+                "swe-bench",
+                "jsonl-heldout",
+                fixture_version="jsonl-source-v1",
+            ),
+            frozen_adapter_row(
+                "jsonl-regression",
+                "regression",
+                "tau2-bench",
+                "jsonl-regression",
+                fixture_version="jsonl-source-v1",
+            ),
+        ]
+        del rows[1]["instruction"]
+        del rows[1]["expected"]
+        export_file.write_text(
+            "\n".join(
+                [
+                    json.dumps(rows[0], sort_keys=True),
+                    "",
+                    json.dumps(rows[1], sort_keys=True),
+                    json.dumps(rows[2], sort_keys=True),
+                    json.dumps(rows[3], sort_keys=True),
+                ]
+            )
+            + "\n"
+        )
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export_dir),
+                    "--profile",
+                    "jsonl-directory-adapters",
+                    "--allow-rejected-rows",
+                ]
+            )
+            == 0
+        )
+        output = capsys.readouterr().out
+        assert "Status: pass_with_rejections" in output
+        report = read_json(
+            tmp_path / "benchmarks" / "jsonl-directory-adapters" / "import_report.json"
+        )
+        assert report["status"] == "pass_with_rejections"
+        assert report["source_export_name"] == "jsonl-directory-export"
+        assert report["source_row_count"] == 4
+        assert report["imported_row_count"] == 3
+        assert report["rejected_row_count"] == 1
+        rejected = report["rejected_rows"][0]
+        assert rejected["source_path"] == "partitions/adapter.jsonl"
+        assert rejected["line_number"] == 3
+        assert rejected["row_index"] == 2
+        assert rejected["external_id"] == "jsonl-bad"
+        assert "__harness_rsi_source_location" not in rejected["row_keys"]
+
+        accepted_rows = read_jsonl(
+            tmp_path
+            / "benchmarks"
+            / "jsonl-directory-adapters"
+            / "sources"
+            / "train"
+            / "terminal-bench.jsonl"
+        )
+        assert "__harness_rsi_source_location" not in accepted_rows[0]
+        assert main(["benchmark", "init", "--name", "jsonl-directory-adapters"]) == 0
+        assert main(["benchmark", "adapters", "--benchmark", "jsonl-directory-adapters"]) == 0
+        adapter_report = read_json(
+            tmp_path
+            / ".rsi"
+            / "benchmarks"
+            / "jsonl-directory-adapters"
+            / "adapter_report.json"
+        )
+        assert adapter_report["status"] == "pass"
+        assert adapter_report["external_adapter_task_count"] == 3
+
+
 def test_benchmark_import_adapters_rejects_bad_rows_by_default(
     tmp_path: Path,
     capsys,
@@ -851,6 +957,39 @@ def test_benchmark_import_adapters_accepts_top_level_json_list(tmp_path: Path) -
         report = read_json(tmp_path / "benchmarks" / "list-export" / "import_report.json")
         assert report["status"] == "pass"
         assert report["task_count"] == 3
+
+
+def test_benchmark_import_adapters_json_list_rejections_remain_file_scoped(
+    tmp_path: Path,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "frozen-list-export.json"
+        rows = frozen_adapter_rows()
+        rejected = frozen_adapter_row("bad-list-row", "train", "terminal-bench", "bad-list-row")
+        del rejected["instruction"]
+        del rejected["expected"]
+        rows.append(rejected)
+        export.write_text(json.dumps(rows, sort_keys=True) + "\n")
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "list-export-partial",
+                    "--allow-rejected-rows",
+                ]
+            )
+            == 0
+        )
+        report = read_json(tmp_path / "benchmarks" / "list-export-partial" / "import_report.json")
+        assert report["status"] == "pass_with_rejections"
+        assert report["rejected_row_count"] == 1
+        assert report["rejected_rows"][0]["source_path"] == "frozen-list-export.json"
+        assert report["rejected_rows"][0]["line_number"] is None
 
 
 def test_benchmark_import_adapters_rejects_unsafe_profile_path(

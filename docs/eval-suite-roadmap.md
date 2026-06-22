@@ -316,13 +316,15 @@ frozen imports without changing promotion semantics.
 CM-0023 added `swe-bench-lite-smoke-v0`, a tiny public SWE-bench Lite frozen
 export that runs through import, materialization, adapter report, and no-promote
 stability smoke with identity-only local evaluators.
+CM-0024 added source-directory-relative file and 1-based line preservation for
+rejected rows from directory JSONL imports.
 
 The next increment should target:
 
-1. Add source-location preservation for JSONL directory imports so rejected rows
-   can cite file and line number instead of only export name and row index.
-2. Import tiny real frozen exports from Terminal-Bench and tau-style families
+1. Import tiny real frozen exports from Terminal-Bench and tau-style families
    after their source identity and local split contracts are equally explicit.
+2. Add a small import-audit query command if review artifacts become hard to
+   inspect from JSON alone.
 3. Keep live simulator or world-model adapters behind stable local trace
    coverage, waiver review, and digest-boundary tests.
 4. Add sanitized real traces only when their source, fixture version, and split

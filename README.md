@@ -200,6 +200,10 @@ harness-rsi benchmark import-adapters \
 Strict import remains the default. Rejected rows block profile creation unless
 `--allow-rejected-rows` is explicit, and strict failures write a review-only
 artifact under `benchmarks/_import_reviews/<profile>/import_review.json`.
+When the source is a directory of JSONL files, rejected-row records preserve the
+source-directory-relative file path and 1-based line number, so larger imports
+can be reviewed as `path/to/file.jsonl:line` without leaking absolute local
+paths into artifacts.
 
 A tiny committed SWE-bench Lite fixture exercises the same path with real public
 benchmark identities:

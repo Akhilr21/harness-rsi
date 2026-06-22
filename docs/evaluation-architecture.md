@@ -151,6 +151,13 @@ SWE-bench patch-grading evidence. The smoke path is:
 `benchmark import-adapters` -> `benchmark init` -> `benchmark adapters` ->
 one no-promote `experiment stability` cycle.
 
+CM-0024 tightens directory JSONL import auditability. Rejected rows from a
+directory source now preserve source-directory-relative `source_path` and
+1-based `line_number` fields in review/import reports, while accepted task rows
+never receive that importer-side provenance in the source profile. This is
+provenance precision only; it does not alter run, gate, coverage,
+composite-gate, or promotion semantics.
+
 ## Splits
 
 Each benchmark environment has three splits:

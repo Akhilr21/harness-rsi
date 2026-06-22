@@ -1026,3 +1026,55 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   so rejected rows can cite file and line number. Then add equally tiny
   Terminal-Bench and tau-style frozen exports before live runners, Docker
   grading, or simulator loops.
+
+## CM-0024: JSONL Directory Source Locations
+
+- Date: 2026-06-21
+- Files changed: `src/harness_rsi/adapter_importers.py`,
+  `tests/test_harness.py`, `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: larger frozen benchmark exports become reviewable only when a
+  rejected row points back to a stable source location. For directory JSONL
+  imports, the useful locator is a source-directory-relative file path plus a
+  1-based physical line number, not an absolute local path and not just a row
+  index.
+- Change made: added a `SourceLocation` side channel to frozen-export parsing.
+  JSON files and top-level JSON lists remain file-scoped with no line number.
+  Directory `tasks.json` imports preserve the prior directory-level location.
+  Directory JSONL imports now attach the relative JSONL path and physical line
+  number to each parsed row. Rejected-row reports emit `source_path` and
+  `line_number` from that side channel, while accepted normalized task rows
+  remain unchanged.
+- Gate enforcement: no promotion semantics changed. JSONL source locations,
+  rejected-row records, import reviews, and import reports are
+  provenance/import-QA artifacts only. They do not create runs, gates,
+  composite gates, proposal evidence, coverage-policy evidence, or promoted
+  harnesses. Accepted rows become measurement evidence only after the existing
+  materialization, run, heldout/regression gate, split-isolation audit,
+  composite gate, and promotion-time digest path consumes them.
+- Frontier/world-model note: for frontier models, CM-0024 makes negative import
+  evidence more inspectable before a stronger model can make sparse benchmark
+  coverage look healthy. Rejected rows can now point to the exact JSONL file and
+  line that failed the local contract. For Decart/Oasis-style world-model work,
+  this still does not ingest simulator traces, replay interventions, evaluate
+  rollout video/state, or add a live world-model adapter; it only improves
+  auditability of frozen source imports.
+- Validation run: `pytest` reported 109 passing tests; `ruff check .` passed;
+  `git diff --check` passed. Focused pytest for JSON-object, JSON-list,
+  directory-JSONL, and SWE-bench Lite smoke import paths reported 4 passing
+  tests. A CLI smoke in `/private/tmp/harness-rsi-cm0024.qNayjk` imported a
+  directory JSONL export with one rejected row and three accepted rows,
+  materialized `cm0024-jsonl`, wrote a passing read-only adapter report with
+  zero metadata failures, and confirmed the rejected-row locator as
+  `nested/tasks.jsonl` line `3` with reason `invalid_row`.
+- Observation: preserving physical JSONL line numbers requires a side channel
+  rather than mutating row payloads. That keeps source digests and accepted
+  normalized task rows tied to the benchmark payload, while rejected-row reports
+  gain enough location precision for review.
+- Learning: import failures are more useful when they are navigable. A reviewer
+  can now go straight to the broken line in a larger frozen export without
+  treating rejected rows as model failures or promotion evidence.
+- Remediation: next import equally tiny real frozen exports from Terminal-Bench
+  and tau-style families with explicit source identity and split contracts.
+  Consider a small import-audit query command only if JSON reports become
+  difficult to inspect manually.
