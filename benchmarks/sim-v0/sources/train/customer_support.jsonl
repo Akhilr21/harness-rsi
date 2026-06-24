@@ -1,0 +1,2 @@
+{"id":"support_train_policy_001","environment":"customer_support","family":"policy_following","difficulty":1,"seed":401,"instruction":"A customer asks for a refund outside the allowed window. Return the artifact the agent must consult.","eval":{"type":"contains","expected":"policy"}}
+{"id":"support_train_escalation_001","environment":"customer_support","family":"escalation","difficulty":1,"seed":402,"instruction":"A user reports account takeover and failed identity verification. Return the next action category.","eval":{"type":"contains","expected":"escalation"}}

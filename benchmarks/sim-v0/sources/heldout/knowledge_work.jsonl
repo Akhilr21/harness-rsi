@@ -1,0 +1,2 @@
+{"id":"kw_heldout_decision_001","environment":"knowledge_work","family":"decision_criteria","difficulty":1,"seed":1101,"instruction":"A harness proposal improves train performance but has no heldout evidence. Return the split needed before promotion.","eval":{"type":"exact","expected":"heldout"}}
+{"id":"kw_heldout_next_action_001","environment":"knowledge_work","family":"planning","difficulty":1,"seed":1102,"instruction":"A user asks to evaluate Hn+1 against Hn with the same model. Return the comparison style.","eval":{"type":"contains","expected":"fixed-model"}}

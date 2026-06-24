@@ -1,0 +1,2 @@
+{"id":"promoted_regression_model_fixed_001","environment":"knowledge_work","family":"promoted_behavior","difficulty":1,"seed":9101,"instruction":"Return the invariant that prevents measuring a model upgrade instead of harness improvement.","eval":{"type":"contains","expected":"fixed model"}}
+{"id":"promoted_regression_rejection_001","environment":"knowledge_work","family":"promoted_behavior","difficulty":1,"seed":9102,"instruction":"A failed Hn+1 candidate should still leave a durable artifact. Return the decision label.","eval":{"type":"contains","expected":"reject"}}

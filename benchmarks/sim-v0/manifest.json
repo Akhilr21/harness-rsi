@@ -1,0 +1,151 @@
+{
+  "id": "sim-v0",
+  "suite_version": "sim-v0.1",
+  "title": "Simulation Suite v0",
+  "description": "Small, reviewable synthetic environments for measuring harness-level improvement before external benchmark adapters.",
+  "baseline_harness": "H0",
+  "split_contract": {
+    "train": "Visible to diagnosis and proposal generation.",
+    "heldout": "Never used by proposal generation; validates Hn+1.",
+    "regression": "Protected behaviors that must not degrade."
+  },
+  "coverage_policy": {
+    "fail_on_missing_required": true,
+    "required": [
+      {
+        "environment": "knowledge_work",
+        "family": "objective_extraction",
+        "split": "train",
+        "reason": "Harnesses must learn to extract the user's true objective from proposal evidence."
+      },
+      {
+        "environment": "knowledge_work",
+        "family": "decision_criteria",
+        "split": "heldout",
+        "reason": "Promotion needs heldout decision-criteria pressure."
+      },
+      {
+        "environment": "knowledge_work",
+        "family": "promoted_behavior",
+        "split": "regression",
+        "reason": "Prior learnings need protected regression checks."
+      },
+      {
+        "environment": "coding_micro",
+        "family": "failure_signal",
+        "split": "train",
+        "reason": "Coding harness proposals need failure-signal evidence."
+      },
+      {
+        "environment": "coding_micro",
+        "family": "regression_awareness",
+        "split": "heldout",
+        "reason": "Coding improvements must show they recognize regression risk."
+      },
+      {
+        "environment": "data_ops",
+        "family": "schema_reasoning",
+        "split": "heldout",
+        "reason": "Data-oriented harness changes need schema mismatch validation."
+      },
+      {
+        "environment": "customer_support",
+        "family": "policy_following",
+        "split": "heldout",
+        "reason": "Support-style harnesses must preserve policy compliance."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "state_consistency",
+        "split": "train",
+        "reason": "World-model harness changes need state consistency as proposal evidence."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "rollout_summarization",
+        "split": "train",
+        "reason": "World-model harness proposals need trace summarization evidence before live simulator adapters."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "impossible_transition",
+        "split": "heldout",
+        "reason": "World-model validation must detect impossible transitions."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "reset_replay",
+        "split": "heldout",
+        "reason": "World-model validation must preserve reset/replay comparability across traces."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "drift_detection",
+        "split": "regression",
+        "reason": "World-model drift detection needs protected regression pressure."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "reset_replay",
+        "split": "regression",
+        "reason": "World-model reset/replay discipline must not regress once introduced."
+      },
+      {
+        "environment": "world_model_static",
+        "family": "cross_vertical",
+        "split": "regression",
+        "reason": "World-model state consistency needs one protected regression hook."
+      }
+    ],
+    "waivers": [
+      {
+        "environment": "mechanics",
+        "family": "exact_eval",
+        "split": "train",
+        "reason": "Mechanics probes are regression-only until train pressure needs deterministic evaluator debugging.",
+        "owner": "eval-suite",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Train split starts using mechanics probes for evaluator debugging."
+      },
+      {
+        "environment": "mechanics",
+        "family": "exact_eval",
+        "split": "heldout",
+        "reason": "Mechanics probes are regression-only in sim-v0.1.",
+        "owner": "eval-suite",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Heldout mechanics probes become part of promotion validation."
+      },
+      {
+        "environment": "coding_micro",
+        "family": "patch_targeting",
+        "split": "regression",
+        "reason": "Patch-targeting regressions are deferred until repo-backed fixtures exist.",
+        "owner": "coding-evals",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Repo-backed coding fixtures land in sim-v0."
+      },
+      {
+        "environment": "data_ops",
+        "family": "schema_reasoning",
+        "split": "regression",
+        "reason": "Data-ops regression fixtures are deferred until asset-backed schemas are added.",
+        "owner": "data-evals",
+        "tracking_ref": "CM-0012",
+        "review_by": "2026-09-30",
+        "expires_when": "Asset-backed schema fixtures land in sim-v0."
+      }
+    ]
+  },
+  "environments": [
+    "knowledge_work",
+    "coding_micro",
+    "data_ops",
+    "customer_support",
+    "world_model_static",
+    "mechanics"
+  ]
+}

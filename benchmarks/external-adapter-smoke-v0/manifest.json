@@ -1,0 +1,50 @@
+{
+  "id": "external-adapter-smoke-v0",
+  "suite_version": "external-adapter-smoke-v0.1",
+  "description": "Read-only adapter-shaped local tasks for Terminal-Bench, SWE-bench, and tau-style sources before full external runners.",
+  "adapter_contract_version": "adapter-contract-v0.1",
+  "external_adapters": [
+    {
+      "name": "terminal-bench",
+      "kind": "terminal",
+      "mode": "read_only",
+      "source_url": "https://www.tbench.ai/"
+    },
+    {
+      "name": "swe-bench",
+      "kind": "swe_patch",
+      "mode": "read_only",
+      "source_url": "https://www.swebench.com/SWE-bench/"
+    },
+    {
+      "name": "tau2-bench",
+      "kind": "tool_agent_user",
+      "mode": "read_only",
+      "source_url": "https://github.com/sierra-research/tau2-bench"
+    }
+  ],
+  "coverage_policy": {
+    "fail_on_missing_required": true,
+    "required": [
+      {
+        "environment": "terminal_ops",
+        "family": "terminal_task_planning",
+        "split": "heldout",
+        "reason": "Terminal adapter smoke coverage must preserve heldout terminal task metadata."
+      },
+      {
+        "environment": "coding_micro",
+        "family": "issue_patch_planning",
+        "split": "heldout",
+        "reason": "SWE adapter smoke coverage must preserve heldout issue-patch metadata."
+      },
+      {
+        "environment": "customer_support",
+        "family": "tool_agent_user",
+        "split": "heldout",
+        "reason": "Tau-style adapter smoke coverage must preserve heldout tool-agent-user metadata."
+      }
+    ],
+    "waivers": []
+  }
+}

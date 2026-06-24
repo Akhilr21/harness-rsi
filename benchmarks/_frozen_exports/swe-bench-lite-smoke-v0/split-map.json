@@ -1,0 +1,7 @@
+{
+  "splits": {
+    "sqlfluff__sqlfluff-1625": "train",
+    "sqlfluff__sqlfluff-1733": "regression",
+    "sqlfluff__sqlfluff-2419": "heldout"
+  }
+}

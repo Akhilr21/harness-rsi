@@ -1,0 +1,7 @@
+{
+  "splits": {
+    "retail:0": "train",
+    "retail:5": "heldout",
+    "retail:9": "regression"
+  }
+}
