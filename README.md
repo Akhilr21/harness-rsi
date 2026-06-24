@@ -205,6 +205,23 @@ source-directory-relative file path and 1-based line number, so larger imports
 can be reviewed as `path/to/file.jsonl:line` without leaking absolute local
 paths into artifacts.
 
+Import and review artifacts can be queried without opening raw JSON:
+
+```bash
+harness-rsi benchmark import-audit --profile frozen-adapters-v0
+harness-rsi benchmark import-audit --profile frozen-adapters-v0 --review
+harness-rsi benchmark import-audit \
+  --profile frozen-adapters-v0 \
+  --reason invalid_row \
+  --source-contains tasks.jsonl
+```
+
+`import-audit` is read-only. It summarizes existing `import_report.json` or
+`import_review.json` artifacts, including accepted/rejected counts, reason
+counts, split maps, adapter counts, source locators, and digests. It does not
+create source profiles, materialize benchmarks, run tasks, write gates, or
+promote candidates.
+
 A tiny committed SWE-bench Lite fixture exercises the same path with real public
 benchmark identities:
 

@@ -1143,3 +1143,57 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   become difficult to inspect manually. Defer live Terminal-Bench execution,
   tau simulators, Docker grading, and Decart/Oasis-style simulator adapters to
   separate CM entries with explicit runner contracts and gate-policy review.
+
+## CM-0026: Import Audit Query Command
+
+- Date: 2026-06-24
+- Files changed: `src/harness_rsi/cli.py`, `tests/test_harness.py`,
+  `README.md`, `docs/evaluation-architecture.md`,
+  `docs/eval-suite-roadmap.md`, `docs/change-management.md`
+- Hypothesis: as frozen external-adapter imports grow, reviewers need a compact
+  CLI view of accepted rows, rejected rows, source locations, split-map
+  decisions, adapter metadata, and reason counts without treating import JSON as
+  benchmark evidence.
+- Change made: added `benchmark import-audit` to read existing
+  `benchmarks/<profile>/import_report.json` and review-only
+  `benchmarks/_import_reviews/<profile>/import_review.json` artifacts. The
+  command prints a deterministic readable summary with accepted/rejected counts,
+  rejection reason counts, split counts, adapter and kind counts, fixture
+  versions, split-map status, accepted/rejected row digests, import-report
+  digest, and rejected-row locators. It also supports `--json` for raw artifact
+  output and rejected-row locator filters for `--reason`, `--adapter`,
+  `--split`, and `--source-contains`.
+- Gate enforcement: no promotion semantics changed. `import-audit` is an
+  inspection view over existing importer artifacts. It does not import rows,
+  create source profiles, materialize benchmarks, run tasks, compare harnesses,
+  create run artifacts, create gate artifacts, write composite decisions, or
+  promote candidates. Accepted rows become measurement evidence only after the
+  existing materialization, run, heldout/regression gate, split-isolation audit,
+  composite gate, and promotion-time digest path consumes them.
+- Frontier/world-model note: for frontier models, CM-0026 makes negative import
+  evidence easier to inspect before any fixed-model Hn/Hn+1 claim. A stronger
+  model can hide sparse coverage in aggregate scores, so rejected rows and
+  split-map debt need a queryable audit surface before live benchmark runners.
+  For Decart/Oasis-style world-model work, this still does not ingest simulator
+  traces, replay interventions, evaluate rollout video/state, run a live
+  simulator, or add a world-model adapter.
+- Validation run: focused pytest for `benchmark import-audit` readable reports,
+  filtered rejected-row locators, review-artifact reads, `--json`, missing
+  artifacts, and unsafe profile paths reported 3 passing tests. Full
+  `.venv/bin/pytest` reported 114 passing tests; `.venv/bin/ruff check .` and
+  `git diff --check` passed. CLI smoke in
+  `/private/tmp/harness-rsi-cm0026.Urc50U` imported a partial frozen export,
+  queried the readable audit summary, filtered rejected rows by
+  reason/adapter/split/source, queried the review artifact, printed review JSON,
+  and created no `.rsi/runs` or `.rsi/gates` directories.
+- Observation: once import reports become numerous, reviewers need a small
+  query surface that exposes row counts, source locations, rejected-row reasons,
+  fixture versions, split decisions, and digests without reading raw JSON.
+- Learning: negative import evidence becomes actionable only when it can be
+  located and filtered. Keeping the command read-only preserves the boundary
+  between import QA and promotion evidence while making measurement debt easier
+  to inspect.
+- Remediation: keep the next live-runner work behind explicit source identity,
+  cost/tool tracking, and gate-policy review. Terminal-Bench, tau-style
+  simulators, and Decart/Oasis-style world-model adapters should remain separate
+  change-management increments until their contracts are replayable.

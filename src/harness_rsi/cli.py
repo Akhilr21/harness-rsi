@@ -4,7 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from harness_rsi.adapter_importers import import_external_adapter_profile
+from harness_rsi.adapter_importers import (
+    import_external_adapter_profile,
+    import_review_output,
+    source_profile_output,
+)
 from harness_rsi.benchmarks import (
     compare_runs,
     gate_candidate,
@@ -171,6 +175,30 @@ def benchmark_import_adapters(args: argparse.Namespace) -> int:
     return 0
 
 
+def benchmark_import_audit(args: argparse.Namespace) -> int:
+    root = import_review_output(args.profile) if args.review else source_profile_output(args.profile)
+    report_name = "import_review.json" if args.review else "import_report.json"
+    report_path = root / report_name
+    if not report_path.exists():
+        raise RuntimeError(f"Import audit artifact not found: {report_path}")
+    report = read_json(report_path)
+    if args.json:
+        print(readable_json(report))
+    else:
+        print(f"Import audit artifact: {report_path}")
+        print(
+            readable_import_audit_summary(
+                report,
+                max_rejected_rows=args.max_rejected_rows,
+                reason=args.reason,
+                adapter=args.adapter,
+                split=args.split,
+                source_contains=args.source_contains,
+            )
+        )
+    return 0
+
+
 def harness_create_candidate(args: argparse.Namespace) -> int:
     path = create_candidate_version(
         parent=args.parent,
@@ -303,6 +331,150 @@ def readable_import_summary(report: dict[str, object]) -> str:
         f"Import report digest: {report.get('import_report_digest')}",
     ]
     return "\n".join(lines)
+
+
+def readable_import_audit_summary(
+    report: dict[str, object],
+    *,
+    max_rejected_rows: int,
+    reason: str | None = None,
+    adapter: str | None = None,
+    split: str | None = None,
+    source_contains: str | None = None,
+) -> str:
+    all_rejected_rows = report.get("rejected_rows", [])
+    rejected_rows = filter_rejected_rows(
+        all_rejected_rows,
+        reason=reason,
+        adapter=adapter,
+        split=split,
+        source_contains=source_contains,
+    )
+    lines = [
+        f"Profile: {report.get('profile')}",
+        f"Suite version: {report.get('suite_version')}",
+        f"Status: {report.get('status')}",
+        f"Review only: {report.get('review_only')}",
+        f"Read only: {report.get('read_only')}",
+        f"Gate semantics changed: {report.get('gate_semantics_changed')}",
+        f"Source export: {report.get('source_export_name')}",
+        f"Source export digest: {report.get('source_export_digest')}",
+        (
+            "Rows: "
+            f"source={report.get('source_row_count')} "
+            f"imported={report.get('imported_row_count')} "
+            f"rejected={report.get('rejected_row_count')}"
+        ),
+        f"Rejection reasons: {readable_status_counts_for_dict(report.get('rejection_reason_counts', {}))}",
+        f"Splits: {readable_split_counts(report.get('split_counts', {}))}",
+        f"Adapters: {readable_status_counts_for_dict(report.get('adapter_counts', {}))}",
+        f"Kinds: {readable_status_counts_for_dict(report.get('kind_counts', {}))}",
+        f"Fixture versions: {readable_fixture_versions(report.get('fixture_versions', {}))}",
+        f"Split map: {readable_split_map_summary(report.get('split_map', {}))}",
+        f"Split map digest: {report.get('split_map_digest')}",
+        f"Accepted rows digest: {report.get('accepted_rows_digest')}",
+        f"Rejected rows digest: {report.get('rejected_rows_digest')}",
+        f"Import report digest: {report.get('import_report_digest')}",
+        f"Rejected row filters: {readable_rejected_row_filters(reason, adapter, split, source_contains)}",
+    ]
+    lines.extend(
+        readable_rejected_row_locators(
+            rejected_rows,
+            total_rejected_rows=list_count(all_rejected_rows),
+            max_rejected_rows=max_rejected_rows,
+        )
+    )
+    return "\n".join(lines)
+
+
+def filter_rejected_rows(
+    value: object,
+    *,
+    reason: str | None,
+    adapter: str | None,
+    split: str | None,
+    source_contains: str | None,
+) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    rows = [row for row in value if isinstance(row, dict)]
+    if reason:
+        rows = [row for row in rows if row.get("reason") == reason]
+    if adapter:
+        rows = [row for row in rows if row.get("adapter_name") == adapter]
+    if split:
+        rows = [row for row in rows if row.get("split") == split]
+    if source_contains:
+        rows = [row for row in rows if source_contains in str(row.get("source_path"))]
+    return rows
+
+
+def readable_rejected_row_filters(
+    reason: str | None,
+    adapter: str | None,
+    split: str | None,
+    source_contains: str | None,
+) -> str:
+    filters = {
+        "reason": reason,
+        "adapter": adapter,
+        "split": split,
+        "source_contains": source_contains,
+    }
+    active = [f"{key}={value}" for key, value in filters.items() if value]
+    return ", ".join(active) if active else "none"
+
+
+def readable_fixture_versions(value: object) -> str:
+    if not isinstance(value, dict) or not value:
+        return "none"
+    parts = []
+    for name in sorted(value):
+        versions = value[name]
+        if isinstance(versions, list):
+            parts.append(f"{name}={','.join(str(version) for version in versions)}")
+        else:
+            parts.append(f"{name}={versions}")
+    return ", ".join(parts)
+
+
+def readable_rejected_row_locators(
+    value: object,
+    *,
+    total_rejected_rows: int,
+    max_rejected_rows: int,
+) -> list[str]:
+    if not isinstance(value, list) or not value:
+        return ["Rejected row locators: none"]
+    limit = max(max_rejected_rows, 0)
+    lines = [
+        "Rejected row locators shown: "
+        f"{min(len(value), limit)} of {len(value)} matching "
+        f"({total_rejected_rows} total)"
+    ]
+    for row in value[:limit]:
+        if not isinstance(row, dict):
+            continue
+        location = readable_row_location(row)
+        reason = row.get("reason")
+        external_id = row.get("external_id")
+        message = row.get("message")
+        lines.append(
+            f"- {location} reason={reason} external_id={external_id} "
+            f"source_row_digest={row.get('source_row_digest')} message={message}"
+        )
+    if len(value) > limit:
+        lines.append(f"- ... {len(value) - limit} more rejected row(s)")
+    return lines
+
+
+def readable_row_location(row: dict[str, object]) -> str:
+    source_path = row.get("source_path")
+    line_number = row.get("line_number")
+    row_index = row.get("row_index")
+    if isinstance(line_number, int):
+        return f"{source_path}:{line_number}"
+    return f"{source_path}:row-{row_index}"
 
 
 def readable_status_counts(value: object) -> str:
@@ -467,6 +639,46 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_import_adapters_parser.add_argument("--force", action="store_true")
     benchmark_import_adapters_parser.set_defaults(func=benchmark_import_adapters)
+
+    benchmark_import_audit_parser = benchmark_sub.add_parser(
+        "import-audit",
+        help="Read an import report or review artifact without changing benchmark state.",
+    )
+    benchmark_import_audit_parser.add_argument("--profile", required=True)
+    benchmark_import_audit_parser.add_argument(
+        "--review",
+        action="store_true",
+        help="Read benchmarks/_import_reviews/<profile>/import_review.json instead of import_report.json.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--max-rejected-rows",
+        type=int,
+        default=5,
+        help="Maximum rejected-row locators to print in the readable summary.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--reason",
+        help="Only print rejected-row locators with this rejection reason.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--adapter",
+        help="Only print rejected-row locators for this adapter name.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--split",
+        choices=["train", "heldout", "regression"],
+        help="Only print rejected-row locators from this split.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--source-contains",
+        help="Only print rejected-row locators whose source_path contains this text.",
+    )
+    benchmark_import_audit_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the full import artifact JSON.",
+    )
+    benchmark_import_audit_parser.set_defaults(func=benchmark_import_audit)
 
     harness = sub.add_parser("harness", help="Manage versioned harness configs.")
     harness_sub = harness.add_subparsers(dest="harness_command", required=True)

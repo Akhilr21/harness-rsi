@@ -377,6 +377,158 @@ def test_benchmark_import_adapters_allows_rejected_rows_with_report(
         assert not (tmp_path / ".rsi" / "gates").exists()
 
 
+def test_benchmark_import_audit_summarizes_partial_import_report(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "partial-export.json"
+        rows = frozen_adapter_rows()
+        rejected = frozen_adapter_row("bad-row", "train", "terminal-bench", "bad-row")
+        del rejected["instruction"]
+        del rejected["expected"]
+        rows.append(rejected)
+        write_frozen_adapter_export(export, rows=rows)
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "partial-adapters",
+                    "--allow-rejected-rows",
+                ]
+            )
+            == 0
+        )
+        capsys.readouterr()
+
+        assert main(["benchmark", "import-audit", "--profile", "partial-adapters"]) == 0
+        output = capsys.readouterr().out
+        assert "Import audit artifact: benchmarks/partial-adapters/import_report.json" in output
+        assert "Status: pass_with_rejections" in output
+        assert "Review only: False" in output
+        assert "Rows: source=4 imported=3 rejected=1" in output
+        assert "Rejection reasons: invalid_row=1" in output
+        assert "Rejected row locators shown: 1 of 1" in output
+        assert "- partial-export.json:row-4 reason=invalid_row external_id=bad-row" in output
+        assert "Gate semantics changed: False" in output
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-audit",
+                    "--profile",
+                    "partial-adapters",
+                    "--reason",
+                    "invalid_row",
+                    "--adapter",
+                    "terminal-bench",
+                    "--split",
+                    "train",
+                    "--source-contains",
+                    "partial-export",
+                ]
+            )
+            == 0
+        )
+        filtered_output = capsys.readouterr().out
+        assert (
+            "Rejected row filters: reason=invalid_row, adapter=terminal-bench, "
+            "split=train, source_contains=partial-export"
+        ) in filtered_output
+        assert "Rejected row locators shown: 1 of 1 matching (1 total)" in filtered_output
+        assert "- partial-export.json:row-4 reason=invalid_row external_id=bad-row" in filtered_output
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+
+
+def test_benchmark_import_audit_reads_review_artifact_and_json(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        export = tmp_path / "strict-reject-export.json"
+        rows = frozen_adapter_rows()
+        rejected = frozen_adapter_row("bad-row", "train", "terminal-bench", "bad-row")
+        del rejected["instruction"]
+        del rejected["expected"]
+        rows.append(rejected)
+        write_frozen_adapter_export(export, rows=rows)
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-adapters",
+                    "--source",
+                    str(export),
+                    "--profile",
+                    "strict-reject",
+                ]
+            )
+            == 1
+        )
+        capsys.readouterr()
+        assert not (tmp_path / "benchmarks" / "strict-reject").exists()
+
+        assert main(["benchmark", "import-audit", "--profile", "strict-reject", "--review"]) == 0
+        output = capsys.readouterr().out
+        assert (
+            "Import audit artifact: benchmarks/_import_reviews/strict-reject/import_review.json"
+            in output
+        )
+        assert "Status: review" in output
+        assert "Review only: True" in output
+        assert "Rows: source=4 imported=3 rejected=1" in output
+        assert "Rejected row locators shown: 1 of 1" in output
+        assert "- strict-reject-export.json:row-4 reason=invalid_row external_id=bad-row" in output
+
+        assert (
+            main(
+                [
+                    "benchmark",
+                    "import-audit",
+                    "--profile",
+                    "strict-reject",
+                    "--review",
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["profile"] == "strict-reject"
+        assert payload["status"] == "review"
+        assert payload["review_only"] is True
+        assert payload["rejected_rows"][0]["source_path"] == "strict-reject-export.json"
+        assert payload["rejected_rows"][0]["line_number"] is None
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+
+
+def test_benchmark_import_audit_rejects_missing_and_unsafe_profiles(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "import-audit", "--profile", "missing-profile"]) == 1
+        output = capsys.readouterr()
+        assert "Import audit artifact not found" in output.err
+        assert not (tmp_path / "benchmarks").exists()
+        assert not (tmp_path / ".rsi").exists()
+
+        assert main(["benchmark", "import-audit", "--profile", "../escape"]) == 1
+        output = capsys.readouterr()
+        assert "Invalid benchmark source profile name" in output.err
+        assert not (tmp_path / "escape").exists()
+        assert not (tmp_path / ".rsi").exists()
+
+
 def test_benchmark_import_adapters_preserves_jsonl_rejected_row_source_location(
     tmp_path: Path,
     capsys,

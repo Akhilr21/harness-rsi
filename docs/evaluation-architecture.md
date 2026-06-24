@@ -165,6 +165,13 @@ evaluators, materialization, adapter reporting, and no-promote stability smoke.
 They do not execute terminal tasks, launch Docker, run tau user simulators,
 mutate tau databases, or add live external-runner evidence.
 
+CM-0026 adds a read-only `benchmark import-audit` command over existing importer
+artifacts. It prints accepted/rejected counts, rejection reason counts,
+split-map status, adapter counts, fixture versions, source locators, and import
+digests from `import_report.json` or review-only `import_review.json` files. It
+is an inspection view only: it does not import rows, materialize benchmarks, run
+tasks, compare harnesses, write gates, or promote candidates.
+
 ## Splits
 
 Each benchmark environment has three splits:
