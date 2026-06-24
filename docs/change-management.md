@@ -1197,3 +1197,58 @@ missing, the gate should fail closed instead of silently ignoring the threshold.
   cost/tool tracking, and gate-policy review. Terminal-Bench, tau-style
   simulators, and Decart/Oasis-style world-model adapters should remain separate
   change-management increments until their contracts are replayable.
+
+## CM-0027: Evaluation/Testing-Level Report
+
+- Date: 2026-06-24
+- Files changed: `src/harness_rsi/testing_levels.py`,
+  `src/harness_rsi/cli.py`, `tests/test_harness.py`, `README.md`,
+  `docs/evaluation-architecture.md`, `docs/eval-suite-roadmap.md`,
+  `docs/change-management.md`
+- Hypothesis: before adding live Terminal-Bench runners, tau simulators, or
+  world-model adapters, reviewers need a compact readiness map that says which
+  testing levels are actually evidenced by current artifacts. The report should
+  reveal missing source/import provenance, materialization, run evidence, gates,
+  composite cycle proof, and repeated-cycle stability instead of letting a good
+  aggregate score imply the whole harness-improvement chain is sound.
+- Change made: added `benchmark levels --benchmark <name> [--json]`, which
+  writes `.rsi/benchmarks/<name>/testing_levels.json` and prints a readable
+  summary. The report maps existing evidence into six levels: `L0`
+  source/import provenance, `L1` materialized benchmark and coverage identity,
+  `L2` run evidence and train-sourced proposals, `L3` heldout/regression gates,
+  `L4` cycle plus split-isolation plus composite gate proof, and `L5`
+  repeated-cycle stability. It also records report-only external-adapter,
+  frontier-model, and world-model boundaries.
+- Gate enforcement: no promotion semantics changed. The levels report is a
+  readiness artifact, not a run, score, gate, composite decision, candidate,
+  rejection, or promotion artifact. It does not synthesize missing evidence; it
+  only scans existing artifacts and reports `pass`, `review`, or `missing`
+  levels. Future CMs can decide whether a level should become gate policy, but
+  CM-0027 keeps it inspection-only.
+- Frontier/world-model note: for frontier models, the report keeps the
+  fixed-model Hn/Hn+1 rule visible and surfaces whether runs have pinned models,
+  usage sources, and missing cost values. This matters because a strong model can
+  hide thin split isolation, coverage, adapter provenance, or efficiency
+  evidence. For Decart/Oasis-style work, CM-0027 still treats
+  `world_model_static` as static trace pressure only. It does not ingest live
+  simulator traces, evaluate video/state rollouts, replay interventions, grade
+  reset/replay behavior in a simulator, or add a live world-model adapter.
+- Validation run: focused pytest for materialized-suite levels and
+  cycle/stability levels reported 2 passing tests. Full `.venv/bin/pytest`
+  reported 116 passing tests; `.venv/bin/ruff check .` and `git diff --check`
+  passed. CLI smoke in `/private/tmp/harness-rsi-cm0027.QoA1Ja` materialized
+  `sim-v0`, wrote a levels report before eval evidence, ran one no-promote
+  stability cycle, wrote a second levels report with L2/L3/L5 passing and L4 in
+  review, and confirmed the command did not create new runs, gates, cycles,
+  proposals, or decisions.
+- Observation: the current system had strong individual artifacts but no single
+  report that showed the level at which evidence stopped. The report makes it
+  obvious when a benchmark is materialized but has no run/gate evidence, or when
+  dry-run cycles exist but the composite promotion boundary is still a reject.
+- Learning: harness-level RSI needs an evidence ladder, not just better scores.
+  The useful question becomes: which exact testing level did Hn+1 clear, and
+  which level is still missing or review-only?
+- Remediation: after this recap, pause the long-running goal loop as requested.
+  When work resumes, live Terminal-Bench, tau, and world-model adapters should
+  start with runner contracts, source identity, cost/tool tracking, and replay
+  digests before any new gate semantics are added.

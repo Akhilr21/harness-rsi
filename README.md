@@ -323,6 +323,7 @@ materialization writes `coverage.json`, and the report can be regenerated with:
 ```bash
 harness-rsi benchmark coverage --benchmark sim-v0
 harness-rsi benchmark waivers --benchmark sim-v0
+harness-rsi benchmark levels --benchmark sim-v0
 ```
 
 Compiled task rows carry evaluator digests, run metadata carries suite and
@@ -345,6 +346,10 @@ The waiver lifecycle command writes
 owner and review date, and compares fresh coverage identity to the stored
 `coverage.json` digest. A gate policy can reuse the same lifecycle evidence to
 block overdue active-missing waivers with an explicit review date.
+The levels command writes `.rsi/benchmarks/<name>/testing_levels.json`, a
+report-only readiness map across source/import provenance, materialization, run
+evidence, gates, composite cycle proof, and stability proof. It does not create
+runs, gates, decisions, candidates, or promotions.
 
 See `docs/eval-suite-roadmap.md` for the full roadmap and change-management
 expectations.

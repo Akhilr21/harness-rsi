@@ -24,6 +24,7 @@ from harness_rsi.harness import DEFAULT_HARNESS, run_suite
 from harness_rsi.improve import latest_run, propose_patch
 from harness_rsi.io import read_json, write_json
 from harness_rsi.paths import HARNESS, LEARNINGS, ROOT, RUNS, TASKS, ensure_dirs
+from harness_rsi.testing_levels import write_testing_levels_report
 from harness_rsi.versions import (
     create_candidate_version,
     list_harness_versions,
@@ -152,6 +153,17 @@ def benchmark_adapters(args: argparse.Namespace) -> int:
     report = read_json(path)
     print(f"Wrote adapter report to {path}")
     print(readable_adapter_summary(report))
+    return 0
+
+
+def benchmark_levels(args: argparse.Namespace) -> int:
+    path = write_testing_levels_report(args.benchmark)
+    report = read_json(path)
+    if args.json:
+        print(readable_json(report))
+    else:
+        print(f"Wrote testing levels report to {path}")
+        print(readable_testing_levels_summary(report))
     return 0
 
 
@@ -333,6 +345,52 @@ def readable_import_summary(report: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
+def readable_testing_levels_summary(report: dict[str, object]) -> str:
+    summary = report.get("summary", {})
+    frontier = report.get("frontier_model_boundary", {})
+    world_model = report.get("world_model_boundary", {})
+    adapter = report.get("external_adapter_boundary", {})
+    lines = [
+        f"Benchmark: {report.get('benchmark')}",
+        f"Read only: {report.get('read_only')}",
+        f"Report only: {report.get('report_only')}",
+        f"Promotion semantics changed: {report.get('promotion_semantics_changed')}",
+        f"Promotion evidence: {report.get('promotion_evidence')}",
+        f"Promotion ready: {dict_get(summary, 'promotion_ready')}",
+        f"Status counts: {readable_status_counts_for_dict(dict_get(summary, 'status_counts', {}))}",
+        f"Blocking levels: {readable_list(dict_get(summary, 'blocking_levels', []))}",
+        (
+            "External adapter boundary: "
+            f"status={dict_get(adapter, 'status')} "
+            f"tasks={dict_get(adapter, 'external_adapter_task_count')}"
+        ),
+        (
+            "Frontier boundary: "
+            f"fixed_model_required={dict_get(frontier, 'fixed_model_required')} "
+            f"observed_models={readable_list(dict_get(frontier, 'observed_models', []))} "
+            f"usage_sources={readable_list(dict_get(frontier, 'usage_sources', []))} "
+            f"runs_missing_cost_usd={dict_get(frontier, 'runs_missing_cost_usd')}"
+        ),
+        (
+            "World-model boundary: "
+            f"status={dict_get(world_model, 'status')} "
+            f"static_tasks={dict_get(world_model, 'static_world_model_task_count')} "
+            f"live_simulator_adapter_present={dict_get(world_model, 'live_simulator_adapter_present')}"
+        ),
+        "Levels:",
+    ]
+    levels = report.get("levels", [])
+    if isinstance(levels, list):
+        for item in levels:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('id')} {item.get('name')}: {item.get('status')} "
+                f"(missing={readable_list(item.get('missing', []))})"
+            )
+    return "\n".join(lines)
+
+
 def readable_import_audit_summary(
     report: dict[str, object],
     *,
@@ -504,6 +562,18 @@ def readable_status_counts_for_dict(value: object) -> str:
     return ", ".join(f"{name}={value[name]}" for name in sorted(value))
 
 
+def dict_get(value: object, key: str, default: object = None) -> object:
+    if isinstance(value, dict):
+        return value.get(key, default)
+    return default
+
+
+def readable_list(value: object) -> str:
+    if not isinstance(value, list) or not value:
+        return "none"
+    return ",".join(str(item) for item in value)
+
+
 def readable_split_map_summary(value: object) -> str:
     if not isinstance(value, dict) or not value.get("provided"):
         return "none"
@@ -616,6 +686,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark_adapters_parser.add_argument("--benchmark", default="synthetic")
     benchmark_adapters_parser.set_defaults(func=benchmark_adapters)
+
+    benchmark_levels_parser = benchmark_sub.add_parser(
+        "levels",
+        help="Write a read-only evaluation/testing-level readiness report.",
+    )
+    benchmark_levels_parser.add_argument("--benchmark", default="synthetic")
+    benchmark_levels_parser.add_argument("--json", action="store_true")
+    benchmark_levels_parser.set_defaults(func=benchmark_levels)
 
     benchmark_import_adapters_parser = benchmark_sub.add_parser(
         "import-adapters",

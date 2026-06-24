@@ -233,6 +233,95 @@ def test_benchmark_adapters_reads_materialized_copy_only(tmp_path: Path) -> None
         assert report["external_adapter_task_count"] == 3
 
 
+def test_benchmark_levels_reports_materialized_suite_without_eval_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        before = artifact_counts(tmp_path)
+        capsys.readouterr()
+
+        assert main(["benchmark", "levels", "--benchmark", "sim-v0"]) == 0
+        output = capsys.readouterr().out
+
+        assert "Wrote testing levels report to" in output
+        assert "Promotion semantics changed: False" in output
+        assert "World-model boundary: status=static_trace_only" in output
+        assert artifact_counts(tmp_path) == before
+
+        report = read_json(tmp_path / ".rsi" / "benchmarks" / "sim-v0" / "testing_levels.json")
+        levels = {item["id"]: item for item in report["levels"]}
+        assert report["read_only"] is True
+        assert report["report_only"] is True
+        assert report["promotion_semantics_changed"] is False
+        assert report["promotion_evidence"] is False
+        assert levels["L0"]["status"] == "pass"
+        assert levels["L1"]["status"] == "pass"
+        assert levels["L2"]["status"] == "missing"
+        assert levels["L3"]["status"] == "missing"
+        assert levels["L4"]["status"] == "missing"
+        assert levels["L5"]["status"] == "missing"
+        assert report["summary"]["blocking_levels"] == ["L2", "L3", "L4", "L5"]
+        assert report["summary"]["promotion_ready"] is False
+        assert report["external_adapter_boundary"]["status"] == "not_applicable"
+        assert report["world_model_boundary"]["status"] == "static_trace_only"
+        assert report["world_model_boundary"]["static_world_model_task_count"] > 0
+        assert report["frontier_model_boundary"]["observed_models"] == []
+        assert report["testing_levels_digest"]
+        assert not (tmp_path / ".rsi" / "runs").exists()
+        assert not (tmp_path / ".rsi" / "gates").exists()
+        assert not (tmp_path / ".rsi" / "cycles").exists()
+
+
+def test_benchmark_levels_reports_cycle_and_stability_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with working_dir(tmp_path):
+        assert main(["benchmark", "init", "--name", "sim-v0"]) == 0
+        stability_path = run_experiment_stability(
+            parent="H0",
+            candidate_prefix="Level",
+            first_candidate_index=1,
+            cycles=1,
+            benchmark="sim-v0",
+            model=None,
+            reasoning_effort="medium",
+            mock=True,
+            min_heldout_delta=0,
+            max_regression_drop=0,
+            promote=False,
+        )
+        stability = read_json(stability_path)
+        assert stability["status"] == "pass"
+        before = artifact_counts(tmp_path)
+        capsys.readouterr()
+
+        assert main(["benchmark", "levels", "--benchmark", "sim-v0", "--json"]) == 0
+        report = json.loads(capsys.readouterr().out)
+
+        assert artifact_counts(tmp_path) == before
+        levels = {item["id"]: item for item in report["levels"]}
+        assert levels["L0"]["status"] == "pass"
+        assert levels["L1"]["status"] == "pass"
+        assert levels["L2"]["status"] == "pass"
+        assert levels["L3"]["status"] == "pass"
+        assert levels["L4"]["status"] == "review"
+        assert levels["L5"]["status"] == "pass"
+        assert "composite gate decision is reject" in levels["L4"]["missing"]
+        assert report["summary"]["blocking_levels"] == ["L4"]
+        assert report["summary"]["promotion_ready"] is False
+        assert report["frontier_model_boundary"]["observed_models"] == ["gpt-5.5"]
+        assert report["frontier_model_boundary"]["usage_sources"] == ["not_collected"]
+        assert report["frontier_model_boundary"]["runs_missing_cost_usd"] > 0
+        assert set(report["world_model_boundary"]["families"]) >= {
+            "drift_detection",
+            "impossible_transition",
+            "reset_replay",
+        }
+
+
 def test_benchmark_import_adapters_writes_source_profile_and_materializes(
     tmp_path: Path,
     capsys,
@@ -3635,6 +3724,23 @@ def assert_environment_rollup_reconciles(results: dict[str, object]) -> None:
 def run_task_ids(run_dir: Path) -> list[str]:
     results = read_json(run_dir / "results.json")
     return [str(item["task_id"]) for item in results["results"]]
+
+
+def artifact_counts(root: Path) -> dict[str, int]:
+    rsi = root / ".rsi"
+    return {
+        "runs": count_paths(rsi / "runs", "*"),
+        "gates": count_paths(rsi / "gates", "*.json"),
+        "cycles": count_paths(rsi / "cycles", "*.json"),
+        "proposals": count_paths(rsi / "proposals", "*.json"),
+        "decisions": count_paths(rsi / "decisions", "*.json"),
+    }
+
+
+def count_paths(root: Path, pattern: str) -> int:
+    if not root.exists():
+        return 0
+    return len(list(root.glob(pattern)))
 
 
 def write_proposal(path: Path) -> Path:

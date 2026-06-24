@@ -420,6 +420,32 @@ and fixture metadata, not new promotion semantics. If local `sim-v0` cycles
 cannot repeatedly promote or reject candidates with deterministic artifacts, a
 public benchmark adapter will only make the failure harder to inspect.
 
+## Evaluation/Testing-Level Report
+
+`benchmark levels` writes `.rsi/benchmarks/<name>/testing_levels.json` as a
+report-only readiness map. It maps the current artifact set onto the existing
+testing ladder:
+
+- `L0`: source and import provenance
+- `L1`: local benchmark materialization and coverage identity
+- `L2`: run evidence with results, traces, and harness snapshots
+- `L3`: heldout and regression gate evidence
+- `L4`: cycle, split-isolation, and composite-gate proof
+- `L5`: repeated-cycle stability evidence
+
+The report is not a gate, score, run, candidate, decision, or promotion
+artifact. It makes missing or review-needed evidence visible before someone
+claims that `Hn+1` improved over `Hn`. This matters for frontier models because
+a strong fixed model can mask thin evidence: aggregate scores may look good
+while usage accounting, split isolation, coverage debt, adapter provenance, or
+world-model trace coverage is missing.
+
+For Decart/Oasis-style work, the report keeps the current boundary explicit:
+`world_model_static` is static trace pressure only. A live simulator adapter
+still needs separate source identity, reset/replay, intervention, rollout-state,
+video/state grading, and digest contracts before its results can be evaluated
+under the same promotion path.
+
 ## Frontier Model Interaction
 
 Frontier models make the harness question sharper because the model may already

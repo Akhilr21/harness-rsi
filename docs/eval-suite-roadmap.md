@@ -323,6 +323,9 @@ that run through import, materialization, adapter report, and no-promote
 stability smoke with identity-only local evaluators.
 CM-0026 added a read-only import-audit query command for existing
 `import_report.json` and review-only `import_review.json` artifacts.
+CM-0027 added a report-only `benchmark levels` command that maps source/import
+provenance, materialization, run evidence, gates, composite cycle proof, and
+stability proof before live runners are introduced.
 
 The next increment should target:
 
